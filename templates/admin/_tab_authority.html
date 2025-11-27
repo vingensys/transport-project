@@ -1,0 +1,113 @@
+<h5 class="mb-3">Authorities</h5>
+
+<!-- Add Authority -->
+<div class="card mb-4">
+  <div class="card-header">Add Authority</div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('admin.add_authority') }}">
+      <div class="row g-3">
+
+        <div class="col-md-3">
+          <label class="form-label">Location Code</label>
+          <input list="locationCodeList" name="location_code"
+                class="form-control" placeholder="Type name or code..." required>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">Designation</label>
+          <input class="form-control" name="title" placeholder="e.g., SM, CGS" required>
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">Address (optional)</label>
+          <input class="form-control" name="address">
+        </div>
+
+      </div>
+      <button class="btn btn-primary mt-3">Add Authority</button>
+    </form>
+  </div>
+</div>
+
+<!-- Table of Authorities -->
+{% if authorities %}
+  <div class="table-responsive">
+    <table class="table table-sm table-bordered align-middle">
+      <thead class="table-light">
+        <tr>
+          <th style="width:60px;">ID</th>
+          <th style="width:90px;">Code</th>
+          <th>Location Name</th>
+          <th>Title</th>
+          <th>Address</th>
+          <th>Edit</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for a in authorities %}
+        <tr>
+          <td>{{ a.id }}</td>
+          <td>{{ a.location.code }}</td>
+          <td>{{ a.location.name }}</td>
+          <td>{{ a.authority_title }}</td>
+          <td>{{ a.address or "-" }}</td>
+          <td>
+            <button class="btn btn-sm btn-outline-primary"
+                    data-bs-toggle="modal"
+                    data-bs-target="#editAuthorityModal{{ a.id }}">
+              Edit
+            </button>
+          </td>
+        </tr>
+
+        <!-- Edit Authority Modal -->
+        <div class="modal fade" id="editAuthorityModal{{ a.id }}" tabindex="-1" aria-hidden="true">
+          <div class="modal-dialog">
+            <div class="modal-content">
+              <form method="POST" action="{{ url_for('admin.edit_authority') }}">
+                <input type="hidden" name="authority_id" value="{{ a.id }}">
+
+                <div class="modal-header">
+                  <h5 class="modal-title">Edit Authority #{{ a.id }}</h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+
+                <div class="modal-body">
+                  <div class="mb-3">
+                    <label class="form-label">Designation</label>
+                    <input class="form-control" name="title"
+                           value="{{ a.authority_title }}">
+                  </div>
+
+                  <div class="mb-3">
+                    <label class="form-label">Address</label>
+                    <input class="form-control" name="address"
+                           value="{{ a.address }}">
+                  </div>
+                </div>
+
+                <div class="modal-footer">
+                  <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                  <button class="btn btn-primary">Save Changes</button>
+                </div>
+
+              </form>
+            </div>
+          </div>
+        </div>
+
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <p class="text-muted">No authorities added yet.</p>
+{% endif %}
+
+<!-- Datalist for Locations -->
+<datalist id="locationCodeList">
+  {% for loc in all_locations %}
+    <option value="{{ loc.name }} [{{ loc.code }}]"></option>
+  {% endfor %}
+</datalist>
+

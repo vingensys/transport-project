@@ -1,0 +1,116 @@
+<h5 class="mb-3">Lorries</h5>
+
+<!-- Add Lorry Form -->
+<div class="card mb-4">
+  <div class="card-header">Add Lorry</div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('admin.add_lorry') }}">
+      <div class="row g-3">
+        <div class="col-md-3">
+          <label class="form-label">Capacity</label>
+          <input class="form-control" name="capacity" required>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Carrier Size</label>
+          <input class="form-control" name="carrier_size" required>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Number of Wheels</label>
+          <input class="form-control" type="number" name="number_of_wheels" required>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Remarks</label>
+          <input class="form-control" name="remarks">
+        </div>
+      </div>
+
+      <button class="btn btn-primary mt-3">Add Lorry</button>
+    </form>
+  </div>
+</div>
+
+
+{% if lorries %}
+  <table class="table table-sm table-bordered align-middle mt-3">
+    <thead class="table-light">
+      <tr>
+        <th style="width: 60px;">ID</th>
+        <th>Capacity</th>
+        <th>Carrier Size</th>
+        <th style="width: 150px;">Number of Wheels</th>
+        <th style="width: 200px;">Remarks</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for l in lorries %}
+        <tr>
+            <td>{{ l.id }}</td>
+            <td>{{ l.capacity }}</td>
+            <td>{{ l.carrier_size }}</td>
+            <td>{{ l.number_of_wheels }}</td>
+            <td>{{ l.remarks or "-" }}</td>
+            <td>
+                <button
+                    class="btn btn-sm btn-outline-primary"
+                    data-bs-toggle="modal"
+                    data-bs-target="#editLorryModal{{ l.id }}"
+                >
+                    Edit
+                </button>
+
+                <form method="POST"
+                        action="{{ url_for('admin.delete_lorry', lorry_id=l.id) }}"
+                        style="display:inline-block;"
+                        onsubmit="return confirm('Delete this lorry permanently?');">
+                    <button class="btn btn-sm btn-outline-danger ms-1">
+                    Delete
+                    </button>
+                </form>
+            </td>
+        </tr>
+        <!-- Edit Lorry Modal -->
+        <div class="modal fade" id="editLorryModal{{ l.id }}" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+            <form method="POST" action="{{ url_for('admin.edit_lorry', lorry_id=l.id) }}">
+                <div class="modal-header">
+                <h5 class="modal-title">Edit Lorry #{{ l.id }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+
+                <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Capacity</label>
+                    <input class="form-control" name="capacity" value="{{ l.capacity }}" required>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Carrier Size</label>
+                    <input class="form-control" name="carrier_size" value="{{ l.carrier_size }}" required>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Number of Wheels</label>
+                    <input type="number" class="form-control" name="number_of_wheels" value="{{ l.number_of_wheels }}" required>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Remarks</label>
+                    <input class="form-control" name="remarks" value="{{ l.remarks }}">
+                </div>
+                </div>
+
+                <div class="modal-footer">
+                <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-primary">Save Changes</button>
+                </div>
+            </form>
+            </div>
+        </div>
+        </div>
+    {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p class="text-muted mt-2">No lorries added yet.</p>
+{% endif %}

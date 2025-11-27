@@ -1,0 +1,242 @@
+<h5 class="mb-3">Route Builder</h5>
+
+<!-- 3-pane Route Builder -->
+<div class="card mb-4">
+  <div class="card-header">
+    Define Route (From / Via / To) & Distance
+  </div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('admin.add_route') }}" id="routeBuilderForm">
+      <div class="row">
+
+        <!-- FROM side -->
+        <div class="col-lg-4 mb-3">
+          <div class="border rounded p-3 h-100">
+            <h6 class="mb-2">From Side Locations</h6>
+            <small class="text-muted d-block mb-2">
+              Add origin-side locations in the order they are visited.
+            </small>
+
+            <div class="input-group mb-2">
+              <input
+                type="text"
+                class="form-control"
+                placeholder="Type name or code..."
+                list="routeLocationList"
+                data-role="from-input"
+              >
+              <button
+                class="btn btn-outline-secondary"
+                type="button"
+                data-role="from-add"
+              >
+                Add
+              </button>
+            </div>
+
+            <ul class="list-group small" id="fromLocationList"></ul>
+          </div>
+        </div>
+
+        <!-- INTERMEDIATE -->
+        <div class="col-lg-4 mb-3">
+          <div class="border rounded p-3 h-100">
+            <h6 class="mb-2">Intermediate Locations (optional)</h6>
+            <small class="text-muted d-block mb-2">
+              Add locations between origin and destination in order.
+            </small>
+
+            <div class="input-group mb-2">
+              <input
+                type="text"
+                class="form-control"
+                placeholder="Type name or code..."
+                list="routeLocationList"
+                data-role="mid-input"
+              >
+              <button
+                class="btn btn-outline-secondary"
+                type="button"
+                data-role="mid-add"
+              >
+                Add
+              </button>
+            </div>
+
+            <ul class="list-group small" id="midLocationList"></ul>
+          </div>
+        </div>
+
+        <!-- TO side -->
+        <div class="col-lg-4 mb-3">
+          <div class="border rounded p-3 h-100">
+            <h6 class="mb-2">To Side Locations</h6>
+            <small class="text-muted d-block mb-2">
+              Add destination-side locations in the order they are visited.
+            </small>
+
+            <div class="input-group mb-2">
+              <input
+                type="text"
+                class="form-control"
+                placeholder="Type name or code..."
+                list="routeLocationList"
+                data-role="to-input"
+              >
+              <button
+                class="btn btn-outline-secondary"
+                type="button"
+                data-role="to-add"
+              >
+                Add
+              </button>
+            </div>
+
+            <ul class="list-group small" id="toLocationList"></ul>
+          </div>
+        </div>
+
+      </div>
+
+      <hr>
+
+      <!-- Distance + Remarks -->
+      <div class="row g-3 align-items-end">
+        <div class="col-md-2">
+          <label class="form-label">Total Distance (KM)</label>
+          <input
+            type="number"
+            class="form-control"
+            name="total_km"
+            min="1"
+            placeholder="e.g., 420"
+            required
+          >
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">Remarks (optional)</label>
+          <input
+            type="text"
+            class="form-control"
+            name="remarks"
+            placeholder="e.g., RPM – PER – AJJ – ED via PER cluster"
+          >
+        </div>
+
+        <div class="col-md-4 text-md-end">
+          <button class="btn btn-primary mt-3 mt-md-0">
+            Save Route
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Existing Routes Table -->
+{% if routes %}
+  <div class="table-responsive">
+    <table class="table table-sm table-bordered align-middle">
+      <thead class="table-light">
+        <tr>
+          <th style="width:60px;">ID</th>
+          <th style="width:160px;">Code</th>
+          <th>Name</th>
+          <th style="width:90px;">Total KM</th>
+          <th style="width:90px;">Active</th>
+          <th>Remarks</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in routes %}
+        <tr>
+          <td>{{ r.id }}</td>
+          <td>{{ r.code }}</td>
+          <td>{{ r.name }}</td>
+          <td>{{ r.total_km }}</td>
+          <td>{{ "Yes" if r.is_active else "No" }}</td>
+          <td>{{ r.remarks or "-" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <p class="text-muted">No routes defined yet.</p>
+{% endif %}
+
+<!-- Datalist of locations: search by name, code in brackets -->
+<datalist id="routeLocationList">
+  {% for loc in all_locations %}
+    <option value="{{ loc.name }} [{{ loc.code }}]"></option>
+  {% endfor %}
+</datalist>
+
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+
+    function extractCode(raw) {
+      if (!raw) return "";
+      raw = raw.trim();
+      const start = raw.indexOf("[");
+      const end = raw.indexOf("]");
+      if (start !== -1 && end !== -1 && end > start + 1) {
+        return raw.substring(start + 1, end).trim();
+      }
+      return raw; // fallback: user typed pure code
+    }
+
+    function setupPanel(panelKey, listId) {
+      const input = document.querySelector(`input[data-role="${panelKey}-input"]`);
+      const button = document.querySelector(`button[data-role="${panelKey}-add"]`);
+      const list = document.getElementById(listId);
+
+      if (!input || !button || !list) return;
+
+      function addItem() {
+        const raw = input.value;
+        const code = extractCode(raw).toUpperCase();
+        if (!code) return;
+
+        const li = document.createElement("li");
+        li.className = "list-group-item d-flex justify-content-between align-items-center";
+
+        const span = document.createElement("span");
+        span.textContent = code;
+        li.appendChild(span);
+
+        const hidden = document.createElement("input");
+        hidden.type = "hidden";
+        hidden.name = panelKey + "_locations[]";
+        hidden.value = code;
+        li.appendChild(hidden);
+
+        const removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "btn btn-sm btn-link text-danger ms-2";
+        removeBtn.textContent = "×";
+        removeBtn.addEventListener("click", function () {
+          li.remove();
+        });
+        li.appendChild(removeBtn);
+
+        list.appendChild(li);
+        input.value = "";
+        input.focus();
+      }
+
+      button.addEventListener("click", addItem);
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          addItem();
+        }
+      });
+    }
+
+    setupPanel("from", "fromLocationList");
+    setupPanel("mid", "midLocationList");
+    setupPanel("to", "toLocationList");
+  });
+</script>

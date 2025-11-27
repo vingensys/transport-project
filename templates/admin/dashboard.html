@@ -1,0 +1,256 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+
+<h2 class="mb-4 text-center">Admin Dashboard</h2>
+
+<!-- TOP-LEVEL TABS -->
+<ul class="nav nav-tabs" id="adminMainTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button
+      class="nav-link"
+      id="main-overview-tab"
+      data-bs-toggle="tab"
+      data-bs-target="#overview"
+      type="button"
+      role="tab"
+    >
+      Overview
+    </button>
+  </li>
+
+  <li class="nav-item" role="presentation">
+    <button
+      class="nav-link active"
+      id="main-masterdata-tab"
+      data-bs-toggle="tab"
+      data-bs-target="#masterdata"
+      type="button"
+      role="tab"
+    >
+      Master Data
+    </button>
+  </li>
+
+  <li class="nav-item" role="presentation">
+    <button
+      class="nav-link"
+      id="main-agreement-tab"
+      data-bs-toggle="tab"
+      data-bs-target="#agreement"
+      type="button"
+      role="tab"
+    >
+      Agreements
+    </button>
+  </li>
+
+  <li class="nav-item" role="presentation">
+    <button
+      class="nav-link"
+      id="main-route-tab"
+      data-bs-toggle="tab"
+      data-bs-target="#route"
+      type="button"
+      role="tab"
+    >
+      Route Builder
+    </button>
+  </li>
+
+  <li class="nav-item" role="presentation">
+    <button
+      class="nav-link"
+      id="main-booking-tab"
+      data-bs-toggle="tab"
+      data-bs-target="#booking"
+      type="button"
+      role="tab"
+    >
+      Booking
+    </button>
+  </li>
+
+  <li class="nav-item" role="presentation">
+    <button
+      class="nav-link"
+      id="main-letters-tab"
+      data-bs-toggle="tab"
+      data-bs-target="#letters"
+      type="button"
+      role="tab"
+    >
+      Letters
+    </button>
+  </li>
+</ul>
+
+<div
+  class="tab-content p-4 border border-top-0 bg-white"
+  id="adminMainTabsContent"
+  style="min-height: 260px;"
+>
+
+  <!-- OVERVIEW (placeholder for future widgets) -->
+  <div
+    class="tab-pane fade"
+    id="overview"
+    role="tabpanel"
+    aria-labelledby="main-overview-tab"
+  >
+    <p class="text-muted">
+      Overview widgets will be added here later.
+    </p>
+  </div>
+
+  <!-- MASTER DATA TAB WITH INNER TABS -->
+  <div
+    class="tab-pane fade show active"
+    id="masterdata"
+    role="tabpanel"
+    aria-labelledby="main-masterdata-tab"
+  >
+    <h5 class="mb-3">Master Data</h5>
+
+    <!-- INNER TABS (Pills) -->
+    <ul class="nav nav-pills mb-3" id="masterDataTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button
+          class="nav-link active"
+          id="company-tab"
+          data-bs-toggle="tab"
+          data-bs-target="#company"
+          type="button"
+          role="tab"
+        >
+          Companies
+        </button>
+      </li>
+
+      <li class="nav-item" role="presentation">
+        <button
+          class="nav-link"
+          id="lorry-tab"
+          data-bs-toggle="tab"
+          data-bs-target="#lorry"
+          type="button"
+          role="tab"
+        >
+          Lorries
+        </button>
+      </li>
+
+      <li class="nav-item" role="presentation">
+        <button
+          class="nav-link"
+          id="location-tab"
+          data-bs-toggle="tab"
+          data-bs-target="#location"
+          type="button"
+          role="tab"
+        >
+          Locations
+        </button>
+      </li>
+
+      <li class="nav-item" role="presentation">
+        <button
+          class="nav-link"
+          id="authority-tab"
+          data-bs-toggle="tab"
+          data-bs-target="#authority"
+          type="button"
+          role="tab"
+        >
+          Authorities
+        </button>
+      </li>
+    </ul>
+
+    <!-- INNER TAB CONTENT -->
+    <div class="tab-content" id="masterDataTabsContent">
+      <div
+        class="tab-pane fade show active"
+        id="company"
+        role="tabpanel"
+        aria-labelledby="company-tab"
+      >
+        {% include "admin/_tab_company.html" %}
+      </div>
+
+      <div
+        class="tab-pane fade"
+        id="lorry"
+        role="tabpanel"
+        aria-labelledby="lorry-tab"
+      >
+        {% include "admin/_tab_lorry.html" %}
+      </div>
+
+      <div
+        class="tab-pane fade"
+        id="location"
+        role="tabpanel"
+        aria-labelledby="location-tab"
+      >
+        {% include "admin/_tab_location.html" %}
+      </div>
+
+      <div
+        class="tab-pane fade"
+        id="authority"
+        role="tabpanel"
+        aria-labelledby="authority-tab"
+      >
+        {% include "admin/_tab_authority.html" %}
+      </div>
+    </div>
+  </div>
+
+  <!-- AGREEMENTS MAIN TAB -->
+  <div
+    class="tab-pane fade"
+    id="agreement"
+    role="tabpanel"
+    aria-labelledby="main-agreement-tab"
+  >
+    {% include "admin/_tab_agreement.html" %}
+  </div>
+
+  <!-- ROUTE BUILDER MAIN TAB (placeholder) -->
+  <div
+    class="tab-pane fade"
+    id="route"
+    role="tabpanel"
+    aria-labelledby="main-route-tab"
+  >
+    {% include "admin/_tab_route.html" %}
+  </div>
+
+  <!-- BOOKING MAIN TAB (placeholder) -->
+  <div
+    class="tab-pane fade"
+    id="booking"
+    role="tabpanel"
+    aria-labelledby="main-booking-tab"
+  >
+    <p class="text-muted">
+      Booking module will be implemented here.
+    </p>
+  </div>
+
+  <!-- LETTERS MAIN TAB (placeholder) -->
+  <div
+    class="tab-pane fade"
+    id="letters"
+    role="tabpanel"
+    aria-labelledby="main-letters-tab"
+  >
+    <p class="text-muted">
+      Letters module will be implemented here.
+    </p>
+  </div>
+
+</div>
+
+{% endblock %}

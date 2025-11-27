@@ -1,0 +1,147 @@
+<h5 class="mb-3">Agreements</h5>
+
+<p class="text-muted">
+  Agreement module will be implemented here (forms and actions later).
+</p>
+
+<!-- Add Agreement Form -->
+<div class="card mb-4">
+  <div class="card-header">Add Agreement</div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('admin.add_agreement') }}">
+      <div class="row g-3">
+        
+        <div class="col-md-3">
+          <label class="form-label">Company</label>
+          <select name="company_id" class="form-select" required>
+            <option value="">Select...</option>
+            {% for c in companies %}
+              <option value="{{ c.id }}">{{ c.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">LOA Number</label>
+          <input class="form-control" name="loa_number" required>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">Total MT-KM</label>
+          <input class="form-control" type="number" step="0.01" name="total_mt_km" required>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">Rate / MT-KM</label>
+          <input class="form-control" type="number" step="0.000001" name="rate_per_mt_km" required>
+        </div>
+
+      </div>
+
+      <button class="btn btn-primary mt-3">Add Agreement</button>
+    </form>
+  </div>
+</div>
+
+{% if agreements %}
+  <table class="table table-sm table-bordered align-middle mt-3">
+    <thead class="table-light">
+      <tr>
+        <th style="width: 60px;">ID</th>
+        <th>Company</th>
+        <th>LOA Number</th>
+        <th style="width: 140px;">Total MT-KM</th>
+        <th style="width: 140px;">Rate / MT-KM</th>
+        <th style="width: 80px;">Active</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for ag in agreements %}
+      <tr>
+        <td>{{ ag.id }}</td>
+        <td>{{ ag.company.name if ag.company else "-" }}</td>
+        <td>{{ ag.loa_number }}</td>
+        <td>{{ ag.total_mt_km }}</td>
+        <td>{{ ag.rate_per_mt_km }}</td>
+        <td>
+          {% if ag.is_active %}
+            <span class="badge bg-success">Yes</span>
+          {% else %}
+            <span class="badge bg-secondary">No</span>
+          {% endif %}
+        </td>
+        <td>
+          <button
+            class="btn btn-sm btn-outline-primary"
+            data-bs-toggle="modal"
+            data-bs-target="#editAgreementModal{{ ag.id }}"
+          >
+            Edit
+          </button>
+
+          {% if not ag.is_active %}
+            <form method="POST" action="{{ url_for('admin.activate_agreement', agreement_id=ag.id) }}"
+                  style="display:inline-block;">
+              <button class="btn btn-sm btn-outline-success">
+                Make Active
+              </button>
+            </form>
+          {% else %}
+            <span class="badge bg-success">Active</span>
+          {% endif %}
+        </td>
+      </tr>
+
+      <!-- Edit Agreement Modal -->
+      <div class="modal fade" id="editAgreementModal{{ ag.id }}" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <form method="POST" action="{{ url_for('admin.edit_agreement', agreement_id=ag.id) }}">
+              <div class="modal-header">
+                <h5 class="modal-title">Edit Agreement #{{ ag.id }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+              </div>
+
+              <div class="modal-body">
+                <div class="mb-3">
+                  <label class="form-label">Company</label>
+                  <select name="company_id" class="form-select">
+                    {% for c in companies %}
+                      <option value="{{ c.id }}" {% if c.id == ag.company_id %}selected{% endif %}>
+                        {{ c.name }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                </div>
+
+                <div class="mb-3">
+                  <label class="form-label">LOA Number</label>
+                  <input class="form-control" name="loa_number" value="{{ ag.loa_number }}">
+                </div>
+
+                <div class="mb-3">
+                  <label class="form-label">Total MT-KM</label>
+                  <input class="form-control" type="number" step="0.01" name="total_mt_km" value="{{ ag.total_mt_km }}">
+                </div>
+
+                <div class="mb-3">
+                  <label class="form-label">Rate / MT-KM</label>
+                  <input class="form-control" type="number" step="0.000001" name="rate_per_mt_km" value="{{ ag.rate_per_mt_km }}">
+                </div>
+              </div>
+
+              <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-primary">Save Changes</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+    {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p class="text-muted mt-2">No agreements added yet.</p>
+{% endif %}
