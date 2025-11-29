@@ -1,6 +1,6 @@
 from flask import render_template, request
 from . import admin_bp
-from transport.models import Company, Agreement, LorryDetails, Location, Authority, Route   # 👈 add models here
+from transport.models import Company, Agreement, LorryDetails, Location, Authority, Route, Booking   # 👈 add models here
 
 
 @admin_bp.route("/")
@@ -28,8 +28,25 @@ def dashboard():
     authorities = Authority.query.order_by(Authority.id.desc()).all()
     all_locations = Location.query.order_by(Location.code).all()
 
+    # Build a mapping: location code -> list of authorities at that location
+    loc_code_by_id = {loc.id: loc.code for loc in all_locations}
+    booking_auth_map = {}
+
+    for auth in authorities:
+        code = loc_code_by_id.get(auth.location_id)
+        if not code:
+            continue
+        booking_auth_map.setdefault(code, []).append(
+            {
+                "id": auth.id,
+                "title": auth.authority_title,  # field name from your model
+            }
+        )
+
     # All routes (for Route Builder tab)
     routes = Route.query.order_by(Route.id.desc()).all()
+
+    bookings = Booking.query.order_by(Booking.id.desc()).all()
 
     return render_template(
         "admin/dashboard.html",
@@ -45,7 +62,9 @@ def dashboard():
 
         authorities=authorities,
         all_locations=all_locations,
+        booking_auth_map=booking_auth_map,   # 🔹 add this
 
         routes=routes,
+        bookings=bookings,
     )
 

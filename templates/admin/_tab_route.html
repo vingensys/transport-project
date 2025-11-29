@@ -7,15 +7,14 @@
   </div>
   <div class="card-body">
     <form method="POST" action="{{ url_for('admin.add_route') }}" id="routeBuilderForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
       <div class="row">
 
         <!-- FROM side -->
         <div class="col-lg-4 mb-3">
           <div class="border rounded p-3 h-100">
             <h6 class="mb-2">From Side Locations</h6>
-            <small class="text-muted d-block mb-2">
-              Add origin-side locations in the order they are visited.
-            </small>
 
             <div class="input-group mb-2">
               <input
@@ -41,10 +40,7 @@
         <!-- INTERMEDIATE -->
         <div class="col-lg-4 mb-3">
           <div class="border rounded p-3 h-100">
-            <h6 class="mb-2">Intermediate Locations (optional)</h6>
-            <small class="text-muted d-block mb-2">
-              Add locations between origin and destination in order.
-            </small>
+            <h6 class="mb-2">Intermediate Locations</h6>
 
             <div class="input-group mb-2">
               <input
@@ -71,9 +67,6 @@
         <div class="col-lg-4 mb-3">
           <div class="border rounded p-3 h-100">
             <h6 class="mb-2">To Side Locations</h6>
-            <small class="text-muted d-block mb-2">
-              Add destination-side locations in the order they are visited.
-            </small>
 
             <div class="input-group mb-2">
               <input
@@ -166,77 +159,9 @@
   <p class="text-muted">No routes defined yet.</p>
 {% endif %}
 
-<!-- Datalist of locations: search by name, code in brackets -->
+<!-- Datalist of locations -->
 <datalist id="routeLocationList">
   {% for loc in all_locations %}
     <option value="{{ loc.name }} [{{ loc.code }}]"></option>
   {% endfor %}
 </datalist>
-
-<script>
-  document.addEventListener("DOMContentLoaded", function () {
-
-    function extractCode(raw) {
-      if (!raw) return "";
-      raw = raw.trim();
-      const start = raw.indexOf("[");
-      const end = raw.indexOf("]");
-      if (start !== -1 && end !== -1 && end > start + 1) {
-        return raw.substring(start + 1, end).trim();
-      }
-      return raw; // fallback: user typed pure code
-    }
-
-    function setupPanel(panelKey, listId) {
-      const input = document.querySelector(`input[data-role="${panelKey}-input"]`);
-      const button = document.querySelector(`button[data-role="${panelKey}-add"]`);
-      const list = document.getElementById(listId);
-
-      if (!input || !button || !list) return;
-
-      function addItem() {
-        const raw = input.value;
-        const code = extractCode(raw).toUpperCase();
-        if (!code) return;
-
-        const li = document.createElement("li");
-        li.className = "list-group-item d-flex justify-content-between align-items-center";
-
-        const span = document.createElement("span");
-        span.textContent = code;
-        li.appendChild(span);
-
-        const hidden = document.createElement("input");
-        hidden.type = "hidden";
-        hidden.name = panelKey + "_locations[]";
-        hidden.value = code;
-        li.appendChild(hidden);
-
-        const removeBtn = document.createElement("button");
-        removeBtn.type = "button";
-        removeBtn.className = "btn btn-sm btn-link text-danger ms-2";
-        removeBtn.textContent = "×";
-        removeBtn.addEventListener("click", function () {
-          li.remove();
-        });
-        li.appendChild(removeBtn);
-
-        list.appendChild(li);
-        input.value = "";
-        input.focus();
-      }
-
-      button.addEventListener("click", addItem);
-      input.addEventListener("keydown", function (e) {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          addItem();
-        }
-      });
-    }
-
-    setupPanel("from", "fromLocationList");
-    setupPanel("mid", "midLocationList");
-    setupPanel("to", "toLocationList");
-  });
-</script>

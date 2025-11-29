@@ -1,4 +1,5 @@
 from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime, date
 
 db = SQLAlchemy()
 
@@ -34,7 +35,7 @@ class LorryDetails(db.Model):
     __tablename__ = "lorry_details"
 
     id = db.Column(db.Integer, primary_key=True)
-    capacity = db.Column(db.String(50), nullable=False)
+    capacity = db.Column(db.Integer, nullable=False)
     carrier_size = db.Column(db.String(50), nullable=False)
     number_of_wheels = db.Column(db.Integer, nullable=False)
     remarks = db.Column(db.String(200))
@@ -135,3 +136,86 @@ class RouteStop(db.Model):
             f"<RouteStop route={self.route_id} seq={self.sequence_index} "
             f"loc={self.location_id} start={self.is_start_cluster} end={self.is_end_cluster}>"
         )
+
+class AppConfig(db.Model):
+    __tablename__ = "app_config"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    home_location_id = db.Column(db.Integer, db.ForeignKey("location.id"))
+    home_authority_id = db.Column(db.Integer, db.ForeignKey("authority.id"))
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    home_location = db.relationship("Location", foreign_keys=[home_location_id])
+    home_authority = db.relationship("Authority", foreign_keys=[home_authority_id])
+
+    def __repr__(self):
+        return f"<AppConfig home_location={self.home_location_id} home_authority={self.home_authority_id}>"
+
+class Booking(db.Model):
+    __tablename__ = "booking"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    agreement_id = db.Column(db.Integer, db.ForeignKey("agreement.id"), nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey("company.id"), nullable=False)
+    lorry_id = db.Column(db.Integer, db.ForeignKey("lorry_details.id"), nullable=False)
+
+    # Route ALWAYS present (matched/created from sequence)
+    route_id = db.Column(db.Integer, db.ForeignKey("route.id"), nullable=False)
+
+    # Either from the route (if matched) or supplied by user
+    trip_km = db.Column(db.Integer, nullable=False)
+
+    # When the lorry is actually required / placed
+    placement_date = db.Column(db.Date, nullable=False, default=date.today)
+
+    booking_date = db.Column(db.Date, nullable=False, default=date.today)
+
+    remarks = db.Column(db.String(250))
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    # convenience relationships
+    agreement = db.relationship("Agreement")
+    company = db.relationship("Company")
+    lorry = db.relationship("LorryDetails")
+    route = db.relationship("Route")
+
+    def __repr__(self):
+        return f"<Booking id={self.id} route={self.route_id} km={self.trip_km}>"
+
+class BookingAuthority(db.Model):
+    __tablename__ = "booking_authority"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    booking_id = db.Column(db.Integer, db.ForeignKey("booking.id"), nullable=False)
+    authority_id = db.Column(db.Integer, db.ForeignKey("authority.id"), nullable=False)
+
+    # 'LOADING' or 'UNLOADING'
+    role = db.Column(db.String(20), nullable=False)
+
+    # ordering for letters (1,2,3...)
+    sequence_index = db.Column(db.Integer, nullable=False, default=1)
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    booking = db.relationship("Booking", backref="booking_authorities")
+    authority = db.relationship("Authority")
+
+    def __repr__(self):
+        return f"<BookingAuthority booking={self.booking_id} authority={self.authority_id} role={self.role}>"

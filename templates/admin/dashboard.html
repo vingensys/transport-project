@@ -91,16 +91,13 @@
   style="min-height: 260px;"
 >
 
-  <!-- OVERVIEW (placeholder for future widgets) -->
+  <!-- OVERVIEW -->
   <div
     class="tab-pane fade"
     id="overview"
     role="tabpanel"
     aria-labelledby="main-overview-tab"
   >
-    <p class="text-muted">
-      Overview widgets will be added here later.
-    </p>
   </div>
 
   <!-- MASTER DATA TAB WITH INNER TABS -->
@@ -217,7 +214,7 @@
     {% include "admin/_tab_agreement.html" %}
   </div>
 
-  <!-- ROUTE BUILDER MAIN TAB (placeholder) -->
+  <!-- ROUTE BUILDER MAIN TAB -->
   <div
     class="tab-pane fade"
     id="route"
@@ -227,30 +224,32 @@
     {% include "admin/_tab_route.html" %}
   </div>
 
-  <!-- BOOKING MAIN TAB (placeholder) -->
+  <!-- BOOKING MAIN TAB -->
   <div
     class="tab-pane fade"
     id="booking"
     role="tabpanel"
     aria-labelledby="main-booking-tab"
   >
-    <p class="text-muted">
-      Booking module will be implemented here.
-    </p>
+    {% include "admin/_tab_booking.html" %}
   </div>
 
-  <!-- LETTERS MAIN TAB (placeholder) -->
+  <!-- LETTERS MAIN TAB -->
   <div
     class="tab-pane fade"
     id="letters"
     role="tabpanel"
     aria-labelledby="main-letters-tab"
   >
-    <p class="text-muted">
-      Letters module will be implemented here.
-    </p>
   </div>
 
 </div>
 
+{% endblock %}
+
+{% block extra_scripts %}
+  {{ super() }}
+  <script src="{{ url_for('static', filename='js/booking.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/route.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/location.js') }}"></script>
 {% endblock %}
