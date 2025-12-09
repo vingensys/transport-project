@@ -1,4 +1,4 @@
-<div class="container">
+<div class="container-fluid">
 
   <h4 class="mb-3">Bookings</h4>
 
@@ -6,11 +6,107 @@
   <form method="POST" action="{{ url_for('admin.add_booking') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-    <div class="card mb-4 border-2 border-primary-subtle" style="background:#f0f7ff;">
+    <div class="card mb-4 border-2 border-primary-subtle">
       <div class="card-header bg-primary text-white">
-          New Booking
+        New Booking
       </div>
       <div class="card-body">
+
+        {# Home depot helper block #}
+        {% if home_location %}
+        <div id="bookingHomeConfig"
+          data-home-code="{{ home_location.code }}"
+          data-home-display="{{ home_location.name }} [{{ home_location.code }}]"
+          {% if home_authority %}
+            data-home-authority-id="{{ home_authority.id }}"
+          {% endif %}
+        >
+          <small class="text-muted d-block mb-2">
+            Home depot location:
+            <strong>{{ home_location.name }} [{{ home_location.code }}]</strong>
+            {% if home_authority %}
+              <br>
+              Default authority:
+              <strong>{{ home_authority.authority_title }}</strong>
+            {% endif %}
+           </small>
+        </div>
+
+        <div class="row mb-3">
+          <div class="col-md-4">
+            <label class="form-label d-block">Home depot booking?</label>
+            <div class="form-check form-check-inline">
+              <input
+                class="form-check-input"
+                type="radio"
+                name="home_mode"
+                id="homeBookingYes"
+                value="yes"
+                checked
+              >
+              <label class="form-check-label" for="homeBookingYes">Yes</label>
+            </div>
+            <div class="form-check form-check-inline">
+              <input
+                class="form-check-input"
+                type="radio"
+                name="home_mode"
+                id="homeBookingNo"
+                value="no"
+              >
+              <label class="form-check-label" for="homeBookingNo">No</label>
+            </div>
+          </div>
+
+          <div class="col-md-4" id="homeDirectionCol">
+            <label class="form-label d-block mb-1">Direction</label>
+
+            <div class="btn-group w-100 direction-toggle" role="group" aria-label="Journey direction">
+              <!-- Inbound: Away → Home -->
+              <input
+                type="radio"
+                class="btn-check"
+                name="home_direction_ui"
+                id="homeInbound"
+                value="INBOUND"
+                autocomplete="off"
+                checked
+              >
+              <label class="btn btn-sm direction-btn direction-inbound" for="homeInbound">
+                <span class="direction-title">
+                  <span class="direction-icon">🏠</span>
+                  Inbound
+                </span>
+                <span class="direction-subtitle">📍 Away → 🏠 Home</span>
+              </label>
+
+              <!-- Outward: Home → Away -->
+              <input
+                type="radio"
+                class="btn-check"
+                name="home_direction_ui"
+                id="homeOutward"
+                value="OUTWARD"
+                autocomplete="off"
+              >
+              <label class="btn btn-sm direction-btn direction-outward" for="homeOutward">
+                <span class="direction-title">
+                  <span class="direction-icon">🚚</span>
+                  Outward
+                </span>
+                <span class="direction-subtitle">🏠 Home → 📍 Away</span>
+              </label>
+            </div>
+          </div>
+
+        </div>
+
+        {% else %}
+          <small class="text-muted d-block mb-3">
+            Home depot location is not configured yet. You can still create normal bookings.
+          </small>
+        {% endif %}
+
         <div class="row">
           <!-- FROM / LOADING side -->
           <div class="col-lg-6 mb-3">
@@ -72,7 +168,7 @@
         <hr class="my-3">
 
         <!-- Placement Date, Distance & Lorry selection -->
-        <div class="row align-items-end">
+        <div class="row align-items-end mb-3">
           <div class="col-md-3 mb-3">
             <label for="bookingPlacementDate" class="form-label">Placement Date</label>
             <input
@@ -85,7 +181,7 @@
           </div>
 
           <div class="col-md-3 mb-3">
-            <label for="bookingTripKm" class="form-label">Distance (KM)</label>
+            <label for="bookingTripKm" class="form-label">Route KM</label>
             <input
               type="number"
               class="form-control"
@@ -98,68 +194,281 @@
           </div>
 
           <div class="col-md-3 mb-3">
-            <label for="bookingLorry" class="form-label">Lorry</label>
+            <label for="bookingLorry" class="form-label">Lorry Type</label>
             <select
-                class="form-select"
-                id="bookingLorry"
-                name="lorry_id"
-                required
+              class="form-select"
+              id="bookingLorry"
+              name="lorry_id"
+              required
             >
-                <option value="">-- Select Lorry --</option>
-                {% for l in lorries %}
+              <option value="">-- Select Lorry --</option>
+              {% for l in lorries %}
                 <option value="{{ l.id }}">
-                    {{ l.capacity }} / {{ l.carrier_size }} / {{ l.number_of_wheels }} wheels
+                  {{ l.capacity }} Ton
                 </option>
-                {% endfor %}
+              {% endfor %}
             </select>
           </div>
 
           <div class="col-md-3 mb-3 text-end">
-            <button type="submit" class="btn btn-primary mt-4">
-              Save Booking
-            </button>
+              <!-- (Intentionally left blank: Save Booking moved to Materials section) -->    
           </div>
         </div>
+
+        <!-- Materials editor -->
+        <hr class="my-3">
+
+        <div class="border rounded p-3">
+          <h5 class="mb-3">Materials (optional)</h5>
+
+          <!-- Mode selection (only) -->
+          <div class="row g-2 align-items-end mb-2">
+            <div class="col-md-3">
+              <label for="materialMode" class="form-label form-label-sm">Mode</label>
+              <select
+                class="form-select form-select-sm"
+                id="materialMode"
+                name="material_mode"
+              >
+                <option value="">-- No materials --</option>
+                <option value="ITEM">Item-wise</option>
+                <option value="LUMPSUM">Lumpsum</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Table in the middle -->
+          <div class="table-responsive mb-2">
+            <table class="table table-sm table-bordered align-middle mb-0">
+              <thead class="table-light">
+                <tr class="text-center">
+                  <th style="width: 40px;">Sl.</th>
+                  <th>Description</th>
+                  <th style="width: 90px;">Unit</th>
+                  <th style="width: 90px;">Qty</th>
+                  <th style="width: 110px;">Rate</th>
+                  <th style="width: 120px;">Amount</th>
+                  <th style="width: 40px;"></th>
+                </tr>
+              </thead>
+              <tbody id="materialLinesBody">
+                <!-- JS will create rows -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Totals + Add Row + Save at the bottom -->
+          <div class="row g-2 align-items-end mt-2">
+            <div class="col-md-5 d-none" id="materialTotalQtyGroup">
+              <div class="row g-2">
+                <div class="col-6">
+                  <label class="form-label form-label-sm">Total Qty</label>
+                  <input
+                    type="number"
+                    class="form-control form-control-sm"
+                    name="material_total_quantity"
+                    step="0.01"
+                    min="0"
+                  >
+                </div>
+                <div class="col-6">
+                  <label class="form-label form-label-sm">Unit</label>
+                  <input
+                    type="text"
+                    class="form-control form-control-sm"
+                    name="material_total_quantity_unit"
+                    maxlength="20"
+                  >
+                </div>
+              </div>
+            </div>
+
+            <div class="col-md-3">
+              <label class="form-label form-label-sm">Total Amount</label>
+              <input
+                type="number"
+                class="form-control form-control-sm"
+                name="material_total_amount"
+                step="0.01"
+                min="0"
+              >
+            </div>
+
+            <div class="col-md-4 text-md-end mt-3 mt-md-0">
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-secondary me-2"
+                id="btnAddMaterialRow"
+              >
+                Add Row
+              </button>
+
+              <!-- New position for Save Booking -->
+              <button
+                type="submit"
+                class="btn btn-primary btn-sm"
+              >
+                Save Booking
+              </button>
+            </div>
+          </div>
+        </div>
+
+
       </div>
     </div>
   </form>
 
-  <!-- Existing bookings table -->
-  {% if bookings %}
-    <div class="table-responsive">
-      <table class="table table-bordered table-striped align-middle">
-        <thead class="table-light">
-          <tr>
-            <th>ID</th>
-            <th>Placement Date</th>
-            <th>Booked On</th>
-            <th>Company</th>
-            <th>Lorry</th>
-            <th>Route</th>
-            <th>KMs</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for b in bookings %}
-            <tr>
-              <td>{{ b.id }}</td>
-              <td>{{ b.placement_date }}</td>
-              <td>{{ b.booking_date }}</td>
-              <td>{{ b.company.name }}</td>
-              <td>
-                {{ b.lorry.capacity }} / {{ b.lorry.carrier_size }} / {{ b.lorry.number_of_wheels }} wheels
-              </td>
-              <td>{{ b.route.name }}</td>
-              <td>{{ b.trip_km }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+  <!-- Booking history (last 5) -->
+  {% if booking_rows %}
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <div>
+          Recent Bookings
+          {% if booking_scope == 'active' and active_agreement %}
+            <small class="text-muted ms-2">
+              (Active agreement: {{ active_agreement.id }} – {{ active_agreement.company.name }})
+            </small>
+          {% endif %}
+        </div>
+        <form
+          method="get"
+          action="{{ url_for('admin.dashboard') }}#booking"
+          class="d-flex align-items-center mb-0"
+        >
+          <label for="bookingScopeSelect" class="form-label form-label-sm mb-0 me-2">
+            Show
+          </label>
+          <select
+            class="form-select form-select-sm"
+            id="bookingScopeSelect"
+            name="booking_scope"
+            onchange="this.form.submit()"
+          >
+            <option value="active" {% if booking_scope == 'active' %}selected{% endif %}>
+              Active agreement
+            </option>
+            <option value="all" {% if booking_scope == 'all' %}selected{% endif %}>
+              All agreements
+            </option>
+          </select>
+        </form>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive mb-0">
+          <table class="table table-bordered table-striped align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th style="width: 7%;">Trip</th>
+                <th style="width: 10%;">Booking Date</th>
+                <th style="width: 10%;">Placement</th>
+                <th style="width: 10%;">Lorry</th>
+                <th style="width: 18%;">From</th>
+                <th style="width: 18%;">Destination</th>
+                <th style="width: 8%;">KM</th>
+                <th style="width: 10%;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in booking_rows[:5] %}
+                {% set b = row.booking %}
+                <tr>
+
+                  <!-- Trip ID (NO modal link) -->
+                  <td class="text-nowrap">{{ row.trip_serial }}</td>
+
+                  <!-- Dates & Lorry -->
+                  <td class="text-nowrap">{{ b.booking_date }}</td>
+                  <td class="text-nowrap">{{ b.placement_date }}</td>
+                  <td class="text-nowrap">{{ b.lorry.capacity }} Ton</td>
+
+                  <!-- From / Dest -->
+                  <td>
+                    <span title="{{ row.from_display_long }}">{{ row.from_display_short }}</span>
+                  </td>
+                  <td>
+                    <span title="{{ row.dest_display_long }}">{{ row.dest_display_short }}</span>
+                  </td>
+
+                  <!-- KM -->
+                  <td class="text-nowrap">{{ b.trip_km }}</td>
+
+                  <!-- Actions -->
+                  <td class="text-center text-nowrap">
+
+                    <!-- DETAILS BUTTON (modal trigger) -->
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-primary px-2 me-1"
+                      data-bs-toggle="modal"
+                      data-bs-target="#bookingDetailModal"
+                      data-booking-id="{{ b.id }}"
+                      data-trip-serial="{{ row.trip_serial }}"
+                      data-booking-date="{{ b.booking_date }}"
+                      data-placement-date="{{ b.placement_date }}"
+                      data-company="{{ b.company.name }}"
+                      data-lorry="{{ b.lorry.capacity }} Ton"
+                      data-from="{{ row.from_display_long }}"
+                      data-dest="{{ row.dest_display_long }}"
+                      data-route="{{ b.route.name }}"
+                      data-trip-km="{{ b.trip_km }}"
+                    >
+                      Details
+                    </button>
+
+                    <!-- CANCEL BUTTON -->
+                    <form
+                      method="POST"
+                      action="{{ url_for('admin.cancel_booking', booking_id=b.id) }}"
+                      class="d-inline"
+                    >
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <input type="hidden" name="redirect_tab" value="#booking">
+
+                      {% if b.status == 'ACTIVE' %}
+                        <button
+                          type="submit"
+                          class="btn btn-sm btn-outline-danger px-2"
+                          onclick="return confirm('Cancel this booking?');"
+                        >
+                          Cancel
+                        </button>
+                      {% else %}
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline-secondary px-2"
+                          disabled
+                        >
+                          Cancelled
+                        </button>
+                      {% endif %}
+                    </form>
+
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   {% else %}
     <p class="text-muted">No bookings added yet.</p>
   {% endif %}
 
+  <div class="d-flex justify-content-end mt-2">
+    <div class="text-end">
+      <a
+        href="{{ url_for('admin.backdated_booking_view') }}"
+        class="btn btn-outline-danger btn-sm"
+      >
+        Backdated Booking…
+      </a>
+      <div class="small text-muted mt-1">
+        For post-facto entries when the field booking was done earlier.
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Datalist for booking location search -->
@@ -223,4 +532,6 @@
 <script>
   window.BOOKING_AUTH_BY_CODE = {{ booking_auth_map|tojson }};
   window.FLASK_QUICK_ADD_AUTHORITY_URL = "{{ url_for('admin.quick_add_authority') }}";
+  window.FLASK_BOOKING_MATERIALS_URL_TEMPLATE =
+    "{{ url_for('admin.booking_materials_json', booking_id=0) | replace('0', '__ID__') }}";
 </script>

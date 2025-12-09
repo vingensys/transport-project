@@ -237,3 +237,76 @@ body[data-theme="orange"] {
   --ta-accent-dark: #c56e0a;
   --ta-accent-soft: #fff1dd;
 }
+
+/* Base button look for direction toggle */
+.direction-toggle .direction-btn {
+  border-width: 2px;
+  border-radius: 0.75rem;
+  padding: 0.35rem 0.75rem;
+  background-color: #ffffff;
+  color: #495057;
+  border-color: #dee2e6;
+  text-align: left;
+  transition:
+    background-color 0.2s ease-in-out,
+    color 0.2s ease-in-out,
+    border-color 0.2s ease-in-out,
+    box-shadow 0.15s ease-in-out,
+    transform 0.15s ease-in-out,
+    opacity 0.15s ease-in-out;
+}
+
+.direction-toggle .direction-title {
+  display: block;
+  font-weight: 600;
+}
+
+.direction-toggle .direction-subtitle {
+  display: block;
+  font-size: 0.8rem;
+  opacity: 0.85;
+}
+
+/* Icons inside labels */
+.direction-icon {
+  font-size: 0.9rem;
+  margin-right: 0.25rem;
+}
+
+/* Unchecked state: slightly dim */
+.btn-check:not(:checked) + .direction-btn {
+  opacity: 0.8;
+}
+
+/* Checked inbound: soft green highlight */
+.btn-check:checked + .direction-inbound {
+  background-color: #e6f4ea;         /* pale green */
+  border-color: #137333;             /* dark green */
+  color: #137333;
+  box-shadow: 0 0 0 0.15rem rgba(19, 115, 51, 0.25);
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+/* Checked outward: soft orange highlight */
+.btn-check:checked + .direction-outward {
+  background-color: #fff4e5;         /* pale orange */
+  border-color: #c05621;
+  color: #c05621;
+  box-shadow: 0 0 0 0.15rem rgba(192, 86, 33, 0.25);
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+/* Hover states (gentle) */
+.direction-toggle .direction-inbound:hover {
+  background-color: #f0faf3;
+  border-color: #137333;
+  color: #137333;
+}
+
+.direction-toggle .direction-outward:hover {
+  background-color: #fff7eb;
+  border-color: #c05621;
+  color: #c05621;
+}

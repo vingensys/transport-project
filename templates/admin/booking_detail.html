@@ -1,0 +1,459 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+
+<div class="container-fluid">
+
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">
+      Trip {{ trip_serial|default(booking.id) }}
+      <small class="text-muted">
+        (Booking #{{ booking.id }})
+      </small>
+    </h4>
+
+
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('admin.dashboard') }}#history" class="btn btn-sm btn-outline-secondary">
+        ← Back to History
+      </a>
+      <a href="{{ url_for('admin.dashboard') }}#booking" class="btn btn-sm btn-outline-secondary">
+        Go to Booking Tab
+      </a>
+    </div>
+  </div>
+
+  <!-- Status strip -->
+  <div class="mb-3">
+    {% if booking.status == 'CANCELLED' %}
+      <span class="badge bg-danger me-2">Cancelled</span>
+      {% if booking.cancelled_at %}
+        <small class="text-muted">
+          Cancelled at {{ booking.cancelled_at }}{% if booking.cancel_reason %} – {{ booking.cancel_reason }}{% endif %}
+        </small>
+      {% endif %}
+    {% elif booking.status == 'ACTIVE' %}
+      <span class="badge bg-success me-2">Active</span>
+      <small class="text-muted">Booking date: {{ booking.booking_date }}</small>
+    {% else %}
+      <span class="badge bg-secondary me-2">{{ booking.status }}</span>
+      <small class="text-muted">Booking date: {{ booking.booking_date }}</small>
+    {% endif %}
+  </div>
+
+  <div class="row g-3">
+
+    <!-- Editable header (safe fields only) -->
+    <div class="col-lg-5">
+      <div class="card border-2 border-primary-subtle">
+        <div class="card-header bg-primary text-white">
+          Edit Booking (Safe Fields)
+        </div>
+        <div class="card-body">
+          <form
+            method="POST"
+            action="{{ url_for('admin.booking_detail', booking_id=booking.id) }}"
+            class="row g-3"
+          >
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <div class="col-12">
+              <label class="form-label">Booking Date</label>
+              <input
+                type="text"
+                class="form-control form-control-sm"
+                value="{{ booking.booking_date }}"
+                disabled
+              >
+            </div>
+
+            <div class="col-12">
+              <label for="editPlacementDate" class="form-label">Placement Date</label>
+              <input
+                type="date"
+                class="form-control form-control-sm"
+                id="editPlacementDate"
+                name="placement_date"
+                value="{{ booking.placement_date }}"
+                required
+              >
+              <div class="form-text">
+                Cannot be earlier than booking date.
+              </div>
+            </div>
+
+            <div class="col-12">
+              <label for="editLorryId" class="form-label">Lorry Type</label>
+              <select
+                class="form-select form-select-sm"
+                id="editLorryId"
+                name="lorry_id"
+                required
+              >
+                <option value="">-- Select Lorry --</option>
+                {% for l in lorries %}
+                  <option
+                    value="{{ l.id }}"
+                    {% if l.id == booking.lorry_id %}selected{% endif %}
+                  >
+                    {{ l.capacity }} Ton · {{ l.number_of_wheels }} wheels · {{ l.carrier_size }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-12 text-end">
+              <button type="submit" class="btn btn-primary btn-sm">
+                Save Changes
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Read-only booking info + route & authorities -->
+    <div class="col-lg-7">
+      <div class="card mb-3">
+        <div class="card-header bg-light">
+          Booking Summary
+        </div>
+        <div class="card-body">
+          <dl class="row mb-0 small">
+            <dt class="col-sm-3">Company</dt>
+            <dd class="col-sm-9">
+              {{ booking.company.name }}
+            </dd>
+
+            <dt class="col-sm-3">Agreement</dt>
+            <dd class="col-sm-9">
+              {{ booking.agreement.loa_number }}
+            </dd>
+
+            <dt class="col-sm-3">Route</dt>
+            <dd class="col-sm-9">
+              {{ booking.route.name }} ({{ booking.trip_km }} KM)
+            </dd>
+
+            <dt class="col-sm-3">Lorry</dt>
+            <dd class="col-sm-9">
+              {{ booking.lorry.capacity }} Ton · {{ booking.lorry.number_of_wheels }} wheels · {{ booking.lorry.carrier_size }}
+            </dd>
+
+            <dt class="col-sm-3">Placement</dt>
+            <dd class="col-sm-9">
+              {{ booking.placement_date }}
+            </dd>
+          </dl>
+        </div>
+      </div>
+
+      <!-- Route & Authorities (designation + address + location) -->
+      <div class="card">
+        <div class="card-header bg-light">
+          Route & Authorities
+        </div>
+        <div class="card-body small">
+          {% set loading_auths = booking.booking_authorities | selectattr('role', 'equalto', 'LOADING') | list %}
+          {% set unloading_auths = booking.booking_authorities | selectattr('role', 'equalto', 'UNLOADING') | list %}
+
+          <div class="row">
+            <div class="col-md-6 mb-2">
+              <h6 class="fw-semibold">Loading (FROM)</h6>
+              {% if loading_auths %}
+                <ul class="list-unstyled mb-0">
+                  {% for ba in loading_auths %}
+                    <li class="mb-2">
+                      <strong>{{ ba.authority.authority_title }}</strong>
+                      {% if ba.authority.address %}
+                        <br>
+                        <span>{{ ba.authority.address }}</span>
+                      {% endif %}
+                      <br>
+                      <span class="text-muted">
+                        {{ ba.authority.location.name }} [{{ ba.authority.location.code }}]
+                      </span>
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <p class="text-muted mb-0">No loading authorities recorded.</p>
+              {% endif %}
+            </div>
+
+            <div class="col-md-6 mb-2">
+              <h6 class="fw-semibold">Unloading (DESTINATION)</h6>
+              {% if unloading_auths %}
+                <ul class="list-unstyled mb-0">
+                  {% for ba in unloading_auths %}
+                    <li class="mb-2">
+                      <strong>{{ ba.authority.authority_title }}</strong>
+                      {% if ba.authority.address %}
+                        <br>
+                        <span>{{ ba.authority.address }}</span>
+                      {% endif %}
+                      <br>
+                      <span class="text-muted">
+                        {{ ba.authority.location.name }} [{{ ba.authority.location.code }}]
+                      </span>
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <p class="text-muted mb-0">No unloading authorities recorded.</p>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Materials: editor on this page (markup only, JS lives in static js file) -->
+  <div class="card mt-4">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+      <span>Materials</span>
+      <small class="text-muted">
+        Edit item-wise (ITEM) or lumpsum material list.
+      </small>
+    </div>
+    <div class="card-body">
+      {% set current_mode = material.mode if material else "" %}
+
+      <form
+        method="POST"
+        action="{{ url_for('admin.booking_materials_edit', booking_id=booking.id) }}"
+        id="materialEditFormDetail"
+      >
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div>
+            <h6 class="mb-0">Material Details</h6>
+            <small class="text-muted">
+              ITEM mode: per-line Qty × Rate → Amount. LUMPSUM: descriptive lines + optional totals.
+            </small>
+          </div>
+          <div class="ms-3" style="min-width: 220px;">
+            <label for="materialModeDetail" class="form-label form-label-sm mb-1">Mode</label>
+            <select
+              class="form-select form-select-sm"
+              id="materialModeDetail"
+              name="material_mode"
+            >
+              <option value="" {% if not current_mode %}selected{% endif %}>(No Material List)</option>
+              <option value="ITEM" {% if current_mode == 'ITEM' %}selected{% endif %}>Item-wise (ITEM)</option>
+              <option value="LUMPSUM" {% if current_mode == 'LUMPSUM' %}selected{% endif %}>Lumpsum</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered align-middle mb-2">
+            <thead class="table-secondary">
+              <tr class="text-center">
+                <th style="width: 40px;">Sl.</th>
+                <th>Description</th>
+                <th style="width: 100px;">Unit</th>
+                <th style="width: 110px;">Qty</th>
+                <th style="width: 110px;">Rate</th>
+                <th style="width: 130px;">Amount</th>
+                <th style="width: 50px;"></th>
+              </tr>
+            </thead>
+            <tbody id="materialLinesBodyDetail">
+              {% if material and material.lines %}
+                {% for line in material.lines %}
+                  <tr>
+                    <td class="text-center seq-cell"></td>
+                    <td>
+                      <input
+                        type="hidden"
+                        name="line_id[]"
+                        value="{{ line.id }}"
+                      >
+                      <input
+                        type="text"
+                        name="line_description[]"
+                        class="form-control form-control-sm"
+                        value="{{ line.description }}"
+                        required
+                      >
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        name="line_unit[]"
+                        class="form-control form-control-sm"
+                        value="{{ line.unit or '' }}"
+                      >
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        name="line_quantity[]"
+                        class="form-control form-control-sm material-qty"
+                        step="0.001"
+                        min="0"
+                        value="{% if line.quantity is not none %}{{ '%.3f'|format(line.quantity) }}{% endif %}"
+                      >
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        name="line_rate[]"
+                        class="form-control form-control-sm material-rate"
+                        step="0.01"
+                        min="0"
+                        value="{% if line.rate is not none %}{{ '%.2f'|format(line.rate) }}{% endif %}"
+                      >
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        name="line_amount[]"
+                        class="form-control form-control-sm material-amount"
+                        step="0.01"
+                        min="0"
+                        value="{% if line.amount is not none %}{{ '%.2f'|format(line.amount) }}{% endif %}"
+                      >
+                    </td>
+                    <td class="text-center">
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-danger"
+                        data-role="remove-material-line-detail"
+                      >
+                        ×
+                      </button>
+                    </td>
+                  </tr>
+                {% endfor %}
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Totals (shown below list) -->
+        <div class="row g-2 mt-2">
+          <div class="col-md-4" id="materialTotalQtyGroupDetail">
+            <label class="form-label form-label-sm mb-1">
+              Total Quantity (LUMPSUM)
+            </label>
+            <div class="input-group input-group-sm">
+              <input
+                type="number"
+                class="form-control"
+                name="material_total_quantity"
+                step="0.01"
+                min="0"
+                value="{% if material and material.total_quantity is not none %}{{ '%.3f'|format(material.total_quantity) }}{% endif %}"
+                placeholder="e.g. 25.5"
+              >
+              <input
+                type="text"
+                class="form-control"
+                name="material_total_quantity_unit"
+                value="{% if material and material.total_quantity_unit %}{{ material.total_quantity_unit }}{% endif %}"
+                placeholder="Unit (e.g. MT)"
+              >
+            </div>
+          </div>
+
+          <div class="col-md-4" id="materialTotalAmountGroupDetail">
+            <label class="form-label form-label-sm mb-1">Total Amount</label>
+            <div class="input-group input-group-sm">
+              <span class="input-group-text">₹</span>
+              <input
+                type="number"
+                class="form-control"
+                name="material_total_amount"
+                step="0.01"
+                min="0"
+                value="{% if material and material.total_amount is not none %}{{ '%.2f'|format(material.total_amount) }}{% endif %}"
+                placeholder="Lumpsum / total"
+              >
+            </div>
+          </div>
+
+          <div class="col-md-4 d-flex align-items-end justify-content-end">
+            <button
+              type="button"
+              class="btn btn-sm btn-outline-primary me-2"
+              id="btnAddMaterialRowDetail"
+              data-role="add-material-row-detail"
+            >
+              Add Row
+            </button>
+            <!-- Cancel = reload detail page, discarding unsaved edits -->
+            <a
+                href="{{ url_for('admin.booking_detail', booking_id=booking.id) }}"
+                class="btn btn-sm btn-outline-secondary me-2"
+            >
+                Cancel
+            </a>            
+            <button
+              type="submit"
+              class="btn btn-sm btn-success"
+            >
+              Save Materials
+            </button>
+          </div>
+        </div>
+
+        {# --- Summary line BELOW table --- #}
+        {% set ns = namespace(any_qty=False) %}
+        {% if material and material.lines %}
+          {% for line in material.lines %}
+            {% if line.quantity is not none %}
+              {% set ns.any_qty = True %}
+            {% endif %}
+          {% endfor %}
+        {% endif %}
+
+        <div class="mt-2 small text-muted">
+          {% if material %}
+            {% if material.mode == 'LUMPSUM' %}
+              {% if ns.any_qty %}
+                {# Row quantities present → do NOT show header total quantity, only total amount if present #}
+                {% if material.total_amount %}
+                  <strong>Total Amount:</strong> {{ "%.2f"|format(material.total_amount) }}
+                {% else %}
+                  <em>Lumpsum mode with per-line quantities.</em>
+                {% endif %}
+              {% else %}
+                {# No per-line qty → header total quantity is meaningful #}
+                {% if material.total_quantity %}
+                  <strong>Total Qty:</strong>
+                  {{ "%.3f"|format(material.total_quantity) }}
+                  {% if material.total_quantity_unit %}
+                    {{ material.total_quantity_unit }}
+                  {% endif %}
+                {% endif %}
+                {% if material.total_amount %}
+                  {% if material.total_quantity %} · {% endif %}
+                  <strong>Total Amount:</strong> {{ "%.2f"|format(material.total_amount) }}
+                {% endif %}
+              {% endif %}
+            {% elif material.mode == 'ITEM' %}
+              {% if material.total_amount %}
+                <strong>Total Amount:</strong> {{ "%.2f"|format(material.total_amount) }}
+              {% else %}
+                <em>Item-wise mode: total amount not recorded.</em>
+              {% endif %}
+            {% else %}
+              <em>Material mode not set.</em>
+            {% endif %}
+          {% else %}
+            <em>No materials recorded yet.</em>
+          {% endif %}
+        </div>
+
+      </form>
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}
