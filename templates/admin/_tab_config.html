@@ -1,0 +1,103 @@
+<div class="container-fluid">
+
+  <h4 class="mb-3">Application Settings</h4>
+
+  <div class="card mb-3 border-2 border-primary-subtle">
+    <div class="card-header bg-primary text-white">
+      Home Depot Configuration
+    </div>
+    <div class="card-body">
+
+      {% if app_config and app_config.home_location %}
+        <p class="small text-muted mb-2">
+          Current home depot:
+          <strong>
+            {{ app_config.home_location.name }} [{{ app_config.home_location.code }}]
+          </strong>
+          {% if app_config.home_authority %}
+            <br>
+            Home authority:
+            <strong>{{ app_config.home_authority.authority_title }}</strong>
+            {% if app_config.home_authority.address %}
+              – {{ app_config.home_authority.address }}
+            {% endif %}
+          {% endif %}
+        </p>
+      {% else %}
+        <p class="small text-muted mb-2">
+          Home depot is not configured yet. Set it below to enable home-based booking helpers.
+        </p>
+      {% endif %}
+
+      <form
+        method="POST"
+        action="{{ url_for('admin.save_app_config') }}"
+        class="row g-3"
+      >
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <!-- Home depot location -->
+        <div class="col-md-6">
+          <label for="configHomeLocationInput" class="form-label">
+            Home Depot Location
+          </label>
+          <input
+            type="text"
+            class="form-control"
+            id="configHomeLocationInput"
+            name="home_location_input"
+            list="configHomeLocationList"
+            placeholder="Type name or code, e.g. Erode Jn [ED]"
+            value="{% if app_config and app_config.home_location %}{{ app_config.home_location.name }} [{{ app_config.home_location.code }}]{% endif %}"
+            required
+          >
+          <div class="form-text">
+            Start typing station name or code; choose from the suggestions.
+          </div>
+        </div>
+
+        <!-- Home depot authority (optional) -->
+        <div class="col-md-6">
+          <label for="configHomeAuthoritySelect" class="form-label">
+            Home Depot Authority (optional)
+          </label>
+          <select
+            class="form-select"
+            id="configHomeAuthoritySelect"
+            name="home_authority_id"
+          >
+            <option value="">-- None / Not set --</option>
+            {% for a in authorities %}
+              <option
+                value="{{ a.id }}"
+                {% if app_config and app_config.home_authority_id == a.id %}selected{% endif %}
+              >
+                {{ a.authority_title }}
+                {% if a.location %}
+                  – {{ a.location.name }} [{{ a.location.code }}]
+                {% endif %}
+              </option>
+            {% endfor %}
+          </select>
+          <div class="form-text">
+            You can optionally select a default authority at the home depot.
+          </div>
+        </div>
+
+        <div class="col-12 text-end">
+          <button type="submit" class="btn btn-primary">
+            Save Settings
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+</div>
+
+<!-- Datalist for home depot location search -->
+<datalist id="configHomeLocationList">
+  {% for loc in all_locations %}
+    <option value="{{ loc.name }} [{{ loc.code }}]"></option>
+  {% endfor %}
+</datalist>

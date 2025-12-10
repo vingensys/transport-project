@@ -1,0 +1,324 @@
+/* -----------------------------------------
+   Transport Admin – Metro-ish Theme (Squared)
+   Accent: Purple (#5A4FCF)
+   Font: Inter Variable
+------------------------------------------ */
+
+/* Inter variable font (place Inter-Variable.ttf under static/fonts/inter/) */
+@font-face {
+  font-family: 'Inter';
+  src: url('../fonts/inter/Inter-Variable.ttf') format('truetype-variations');
+  font-weight: 1 999;
+  font-display: swap;
+}
+
+/* Color + spacing tokens */
+
+:root {
+  --ta-accent: #5a4fcf;
+  --ta-accent-dark: #4339b5;
+  --ta-accent-soft: #f5f3ff;
+  --ta-danger: #c0392b;
+  --ta-success: #1d9c5a;
+  --ta-text-main: #1f1f1f;
+  --ta-text-muted: #6c757d;
+  --ta-border-subtle: #dee2e6;
+  --ta-bg-main: #f3f4f8;
+}
+
+/* Make things a bit larger / more readable */
+html {
+  font-size: 18px; /* base size; 1rem = 16px */
+}
+
+/* Global body / typography */
+
+body.bg-light {
+  background-color: var(--ta-bg-main) !important;
+  color: var(--ta-text-main);
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  font-feature-settings: "ss01", "ss02";
+}
+
+/* Navbar – dark solid bar */
+
+.navbar.navbar-dark.bg-dark {
+  background: linear-gradient(90deg, var(--ta-accent-dark), #000000) !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  border-radius: 0;
+}
+
+.navbar-brand {
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+/* Cards – squared, subtle shadows and uniform background */
+
+.card {
+  border-radius: 2px;
+  border: 1px solid var(--ta-border-subtle);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 1px 2px rgba(15, 23, 42, 0.06);
+  background-color: #ffffff;
+}
+
+/* Booking highlight card – make identical to others */
+.card.border-primary-subtle {
+  border-color: var(--ta-border-subtle) !important;
+  background: #ffffff !important;
+}
+
+.card-header {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  background: linear-gradient(90deg, var(--ta-accent-soft), #ffffff);
+  font-weight: 600;
+  font-size: 0.9rem;
+  border-radius: 2px 2px 0 0;
+}
+
+/* Headings */
+
+h4, h5, h6 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin-bottom: 0.6rem;
+}
+
+h4 { font-size: 1.35rem; } /* ~21.6px */
+h5 { font-size: 1.15rem; } /* ~18.4px */
+h6 { font-size: 1.00rem; } /* 16px */
+
+/* Buttons – flat, squared, keep inline-flow behaviour */
+
+.btn {
+  border-radius: 2px;
+  font-weight: 500;
+  font-size: 0.93rem;         /* ~14.9px */
+  padding: 0.4rem 0.9rem;     /* not too tall, prevents misalignment */
+}
+
+.btn-primary {
+  background-color: var(--ta-accent) !important;
+  border-color: var(--ta-accent) !important;
+}
+
+.btn-primary:hover,
+.btn-primary:focus {
+  background-color: var(--ta-accent-dark) !important;
+  border-color: var(--ta-accent-dark) !important;
+}
+
+.btn-outline-primary {
+  border-color: var(--ta-accent) !important;
+  color: var(--ta-accent) !important;
+}
+
+.btn-outline-primary:hover,
+.btn-outline-primary:focus {
+  background-color: var(--ta-accent) !important;
+  color: #ffffff !important;
+}
+
+.btn-outline-danger {
+  border-radius: 2px;
+}
+
+/* Do NOT change display for buttons or forms; keep HTML-driven layout */
+button,
+.btn {
+  vertical-align: middle; /* small fix to keep inline buttons visually aligned */
+}
+
+/* Form controls – squared, clearer text */
+
+.form-control,
+.form-select {
+  border-radius: 2px;
+  border-color: var(--ta-border-subtle);
+  font-size: 0.95rem;    /* ~15.2px */
+}
+
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--ta-accent);
+  box-shadow: 0 0 0 0.12rem rgba(90, 79, 207, 0.35);
+}
+
+/* Tables – clean, slightly larger text */
+
+.table {
+  font-size: 0.92rem; /* ~14.7px */
+}
+
+.table thead {
+  background-color: var(--ta-accent-soft);
+  border-bottom: 1px solid var(--ta-border-subtle);
+}
+
+.table thead th {
+  border-bottom-width: 1px;
+  color: var(--ta-text-main);
+}
+
+.table tbody tr:hover {
+  background-color: #f7f7fc;
+}
+
+.table-bordered > :not(caption) > * > * {
+  border-color: var(--ta-border-subtle);
+}
+
+/* Pagination – compact pills, a bit square */
+
+.pagination .page-link {
+  border-radius: 16px !important;
+  border-color: transparent;
+  font-size: 0.8rem;
+}
+
+.pagination .page-item.active .page-link {
+  background-color: var(--ta-accent);
+  border-color: var(--ta-accent);
+}
+
+/* Toast container */
+
+#toast-container .toast {
+  border-radius: 2px;
+  box-shadow:
+    0 2px 4px rgba(15, 23, 42, 0.18),
+    0 6px 14px rgba(15, 23, 42, 0.2);
+}
+
+/* Toast colors */
+
+.toast.bg-success {
+  background-color: var(--ta-success) !important;
+}
+
+.toast.bg-danger {
+  background-color: var(--ta-danger) !important;
+}
+
+.toast .toast-body {
+  font-size: 0.9rem;
+}
+
+/* Utility text color */
+
+.text-muted {
+  color: var(--ta-text-muted) !important;
+}
+
+/* -----------------------------------------
+   Theme variants – override accent colors
+   (Default purple is already in :root)
+------------------------------------------ */
+
+/* Explicitly define current theme as "purple" */
+body[data-theme="purple"] {
+  --ta-accent: #5a4fcf;
+  --ta-accent-dark: #4339b5;
+  --ta-accent-soft: #f5f3ff;
+}
+
+/* Bootstrap-like blue theme */
+body[data-theme="blue"] {
+  --ta-accent: #0d6efd;
+  --ta-accent-dark: #0a58ca;
+  --ta-accent-soft: #e7f0ff;
+}
+
+/* Complementary orange theme */
+body[data-theme="orange"] {
+  --ta-accent: #fd910d;
+  --ta-accent-dark: #c56e0a;
+  --ta-accent-soft: #fff1dd;
+}
+
+/* Base button look for direction toggle */
+.direction-toggle .direction-btn {
+  border-width: 2px;
+  border-radius: 0.75rem;
+  padding: 0.35rem 0.75rem;
+  background-color: #ffffff;
+  color: #495057;
+  border-color: #dee2e6;
+  text-align: left;
+  transition:
+    background-color 0.2s ease-in-out,
+    color 0.2s ease-in-out,
+    border-color 0.2s ease-in-out,
+    box-shadow 0.15s ease-in-out,
+    transform 0.15s ease-in-out,
+    opacity 0.15s ease-in-out;
+}
+
+.direction-toggle .direction-title {
+  display: block;
+  font-weight: 600;
+}
+
+.direction-toggle .direction-subtitle {
+  display: block;
+  font-size: 0.8rem;
+  opacity: 0.85;
+}
+
+/* Icons inside labels */
+.direction-icon {
+  font-size: 0.9rem;
+  margin-right: 0.25rem;
+}
+
+/* Unchecked state: slightly dim */
+.btn-check:not(:checked) + .direction-btn {
+  opacity: 0.8;
+}
+
+/* Checked inbound: soft green highlight */
+.btn-check:checked + .direction-inbound {
+  background-color: #e6f4ea;         /* pale green */
+  border-color: #137333;             /* dark green */
+  color: #137333;
+  box-shadow: 0 0 0 0.15rem rgba(19, 115, 51, 0.25);
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+/* Checked outward: soft orange highlight */
+.btn-check:checked + .direction-outward {
+  background-color: #fff4e5;         /* pale orange */
+  border-color: #c05621;
+  color: #c05621;
+  box-shadow: 0 0 0 0.15rem rgba(192, 86, 33, 0.25);
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+/* Hover states (gentle) */
+.direction-toggle .direction-inbound:hover {
+  background-color: #f0faf3;
+  border-color: #137333;
+  color: #137333;
+}
+
+.direction-toggle .direction-outward:hover {
+  background-color: #fff7eb;
+  border-color: #c05621;
+  color: #c05621;
+}
+
+.inbound-row {
+  background-color: rgba(0, 123, 255, 0.08);   /* light blue tint */
+}
+
+.outbound-row {
+  background-color: rgba(255, 193, 7, 0.15);   /* light amber tint */
+}
+
+.home-row {
+  background-color: rgba(108, 117, 125, 0.12); /* light grey tint */
+}

@@ -1,14 +1,16 @@
-<h5 class="mb-3">Lorries</h5>
+<h5 class="mb-3">Lorry Types</h5>
 
-<!-- Add Lorry Form -->
+<!-- Add Lorry Type -->
 <div class="card mb-4">
-  <div class="card-header">Add Lorry</div>
+  <div class="card-header">Add Lorry Type</div>
   <div class="card-body">
     <form method="POST" action="{{ url_for('admin.add_lorry') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
       <div class="row g-3">
         <div class="col-md-3">
           <label class="form-label">Capacity</label>
-          <input class="form-control" name="capacity" required>
+          <input type="number" min="1" class="form-control" name="capacity" required>
         </div>
         <div class="col-md-3">
           <label class="form-label">Carrier Size</label>
@@ -16,101 +18,108 @@
         </div>
         <div class="col-md-3">
           <label class="form-label">Number of Wheels</label>
-          <input class="form-control" type="number" name="number_of_wheels" required>
+          <input type="number" min="1" class="form-control" name="number_of_wheels" required>
         </div>
         <div class="col-md-3">
-          <label class="form-label">Remarks</label>
+          <label class="form-label">Remarks (optional)</label>
           <input class="form-control" name="remarks">
         </div>
       </div>
 
-      <button class="btn btn-primary mt-3">Add Lorry</button>
+      <button class="btn btn-primary mt-3">Add Lorry Type</button>
     </form>
   </div>
 </div>
 
-
 {% if lorries %}
-  <table class="table table-sm table-bordered align-middle mt-3">
+  <table class="table table-sm table-bordered align-middle">
     <thead class="table-light">
       <tr>
         <th style="width: 60px;">ID</th>
         <th>Capacity</th>
         <th>Carrier Size</th>
-        <th style="width: 150px;">Number of Wheels</th>
-        <th style="width: 200px;">Remarks</th>
+        <th>Wheels</th>
+        <th>Remarks</th>
+        <th style="width: 320px;">Actions</th>
       </tr>
     </thead>
     <tbody>
     {% for l in lorries %}
-        <tr>
-            <td>{{ l.id }}</td>
-            <td>{{ l.capacity }}</td>
-            <td>{{ l.carrier_size }}</td>
-            <td>{{ l.number_of_wheels }}</td>
-            <td>{{ l.remarks or "-" }}</td>
-            <td>
-                <button
-                    class="btn btn-sm btn-outline-primary"
-                    data-bs-toggle="modal"
-                    data-bs-target="#editLorryModal{{ l.id }}"
-                >
-                    Edit
-                </button>
+      <tr>
+        <td>{{ l.id }}</td>
+        <td>{{ l.capacity }}</td>
+        <td>{{ l.carrier_size }}</td>
+        <td>{{ l.number_of_wheels }}</td>
+        <td>{{ l.remarks or "-" }}</td>
+        <td>
+          <button
+            class="btn btn-sm btn-outline-primary"
+            data-bs-toggle="modal"
+            data-bs-target="#editLorryModal{{ l.id }}"
+          >
+            Edit
+          </button>
 
-                <form method="POST"
-                        action="{{ url_for('admin.delete_lorry', lorry_id=l.id) }}"
-                        style="display:inline-block;"
-                        onsubmit="return confirm('Delete this lorry permanently?');">
-                    <button class="btn btn-sm btn-outline-danger ms-1">
-                    Delete
-                    </button>
-                </form>
-            </td>
-        </tr>
-        <!-- Edit Lorry Modal -->
-        <div class="modal fade" id="editLorryModal{{ l.id }}" tabindex="-1" aria-hidden="true">
+          <form method="POST"
+                action="{{ url_for('admin.delete_lorry', lorry_id=l.id) }}"
+                style="display:inline-block;"
+                onsubmit="return confirm('Delete this lorry permanently?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-outline-danger ms-1">
+              Delete
+            </button>
+          </form>
+        </td>
+      </tr>
+
+      <!-- Edit Lorry Modal -->
+      <div class="modal fade" id="editLorryModal{{ l.id }}" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog">
-            <div class="modal-content">
+          <div class="modal-content">
             <form method="POST" action="{{ url_for('admin.edit_lorry', lorry_id=l.id) }}">
-                <div class="modal-header">
-                <h5 class="modal-title">Edit Lorry #{{ l.id }}</h5>
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+              <div class="modal-header">
+                <h5 class="modal-title">Edit Lorry Type #{{ l.id }}</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
+              </div>
 
-                <div class="modal-body">
+              <div class="modal-body">
                 <div class="mb-3">
-                    <label class="form-label">Capacity</label>
-                    <input class="form-control" name="capacity" value="{{ l.capacity }}" required>
+                  <label class="form-label">Capacity</label>
+                  <input type="number" min="1" class="form-control" name="capacity"
+                         value="{{ l.capacity }}">
                 </div>
-
                 <div class="mb-3">
-                    <label class="form-label">Carrier Size</label>
-                    <input class="form-control" name="carrier_size" value="{{ l.carrier_size }}" required>
+                  <label class="form-label">Carrier Size</label>
+                  <input class="form-control" name="carrier_size"
+                         value="{{ l.carrier_size }}">
                 </div>
-
                 <div class="mb-3">
-                    <label class="form-label">Number of Wheels</label>
-                    <input type="number" class="form-control" name="number_of_wheels" value="{{ l.number_of_wheels }}" required>
+                  <label class="form-label">Number of Wheels</label>
+                  <input type="number" min="1" class="form-control" name="number_of_wheels"
+                         value="{{ l.number_of_wheels }}">
                 </div>
-
                 <div class="mb-3">
-                    <label class="form-label">Remarks</label>
-                    <input class="form-control" name="remarks" value="{{ l.remarks }}">
+                  <label class="form-label">Remarks</label>
+                  <input class="form-control" name="remarks" value="{{ l.remarks or '' }}">
                 </div>
-                </div>
+              </div>
 
-                <div class="modal-footer">
-                <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button class="btn btn-primary">Save Changes</button>
-                </div>
+              <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                  Cancel
+                </button>
+                <button class="btn btn-primary">Save changes</button>
+              </div>
             </form>
-            </div>
+          </div>
         </div>
-        </div>
+      </div>
+
     {% endfor %}
     </tbody>
   </table>
 {% else %}
-  <p class="text-muted mt-2">No lorries added yet.</p>
+  <p class="text-muted mt-3">No lorry types defined yet.</p>
 {% endif %}

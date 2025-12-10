@@ -1,0 +1,545 @@
+<div class="container-fluid">
+
+  <h4 class="mb-3">Bookings</h4>
+
+  <!-- Booking builder -->
+  <form method="POST" action="{{ url_for('admin.add_booking') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="card mb-4 border-2 border-primary-subtle">
+      <div class="card-header bg-primary text-white">
+        New Booking
+      </div>
+      <div class="card-body">
+
+        {# Home depot helper block #}
+        {% if home_location %}
+        <div id="bookingHomeConfig"
+          data-home-code="{{ home_location.code }}"
+          data-home-display="{{ home_location.name }} [{{ home_location.code }}]"
+          {% if home_authority %}
+            data-home-authority-id="{{ home_authority.id }}"
+          {% endif %}
+        >
+          <small class="text-muted d-block mb-2">
+            Home depot location:
+            <strong>{{ home_location.name }} [{{ home_location.code }}]</strong>
+            {% if home_authority %}
+              <br>
+              Default authority:
+              <strong>{{ home_authority.authority_title }}</strong>
+            {% endif %}
+           </small>
+        </div>
+
+        <div class="row mb-3">
+          <div class="col-md-4">
+            <label class="form-label d-block">Home depot booking?</label>
+            <div class="form-check form-check-inline">
+              <input
+                class="form-check-input"
+                type="radio"
+                name="home_mode"
+                id="homeBookingYes"
+                value="yes"
+                checked
+              >
+              <label class="form-check-label" for="homeBookingYes">Yes</label>
+            </div>
+            <div class="form-check form-check-inline">
+              <input
+                class="form-check-input"
+                type="radio"
+                name="home_mode"
+                id="homeBookingNo"
+                value="no"
+              >
+              <label class="form-check-label" for="homeBookingNo">No</label>
+            </div>
+          </div>
+
+          <div class="col-md-4" id="homeDirectionCol">
+            <label class="form-label d-block mb-1">Direction</label>
+
+            <div class="btn-group w-100 direction-toggle" role="group" aria-label="Journey direction">
+              <!-- Inbound: Away → Home -->
+              <input
+                type="radio"
+                class="btn-check"
+                name="home_direction_ui"
+                id="homeInbound"
+                value="INBOUND"
+                autocomplete="off"
+                checked
+              >
+              <label class="btn btn-sm direction-btn direction-inbound" for="homeInbound">
+                <span class="direction-title">
+                  <span class="direction-icon">🏠</span>
+                  Inbound
+                </span>
+                <span class="direction-subtitle">📍 Away → 🏠 Home</span>
+              </label>
+
+              <!-- Outward: Home → Away -->
+              <input
+                type="radio"
+                class="btn-check"
+                name="home_direction_ui"
+                id="homeOutward"
+                value="OUTWARD"
+                autocomplete="off"
+              >
+              <label class="btn btn-sm direction-btn direction-outward" for="homeOutward">
+                <span class="direction-title">
+                  <span class="direction-icon">🚚</span>
+                  Outward
+                </span>
+                <span class="direction-subtitle">🏠 Home → 📍 Away</span>
+              </label>
+            </div>
+          </div>
+
+        </div>
+
+        {% else %}
+          <small class="text-muted d-block mb-3">
+            Home depot location is not configured yet. You can still create normal bookings.
+          </small>
+        {% endif %}
+
+        <div class="row">
+          <!-- FROM / LOADING side -->
+          <div class="col-lg-6 mb-3">
+            <div class="border rounded p-3 h-100">
+              <h5 class="mb-2">FROM Side (Loading)</h5>
+
+              <div class="input-group mb-2">
+                <input
+                  type="text"
+                  class="form-control"
+                  placeholder="Type name or code..."
+                  list="bookingLocationList"
+                  data-role="from-booking-input"
+                >
+                <button
+                  class="btn btn-outline-secondary"
+                  type="button"
+                  data-role="from-booking-add"
+                >
+                  Add
+                </button>
+              </div>
+
+              <ul class="list-group small" id="fromBookingLocationList">
+                <!-- JS will append FROM locations here -->
+              </ul>
+            </div>
+          </div>
+
+          <!-- DESTINATION / UNLOADING side -->
+          <div class="col-lg-6 mb-3">
+            <div class="border rounded p-3 h-100">
+              <h5 class="mb-2">DESTINATION Side (Unloading)</h5>
+
+              <div class="input-group mb-2">
+                <input
+                  type="text"
+                  class="form-control"
+                  placeholder="Type name or code..."
+                  list="bookingLocationList"
+                  data-role="dest-booking-input"
+                >
+                <button
+                  class="btn btn-outline-secondary"
+                  type="button"
+                  data-role="dest-booking-add"
+                >
+                  Add
+                </button>
+              </div>
+
+              <ul class="list-group small" id="destBookingLocationList">
+                <!-- JS will append DEST locations here -->
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <hr class="my-3">
+
+        <!-- Placement Date, Distance & Lorry selection -->
+        <div class="row align-items-end mb-3">
+          <div class="col-md-3 mb-3">
+            <label for="bookingPlacementDate" class="form-label">Placement Date</label>
+            <input
+              type="date"
+              class="form-control"
+              id="bookingPlacementDate"
+              name="placement_date"
+              required
+            >
+          </div>
+
+          <div class="col-md-3 mb-3">
+            <label for="bookingTripKm" class="form-label">Route KM</label>
+            <input
+              type="number"
+              class="form-control"
+              id="bookingTripKm"
+              name="trip_km"
+              min="1"
+              step="1"
+              required
+            >
+          </div>
+
+          <div class="col-md-3 mb-3">
+            <label for="bookingLorry" class="form-label">Lorry Type</label>
+            <select
+              class="form-select"
+              id="bookingLorry"
+              name="lorry_id"
+              required
+            >
+              <option value="">-- Select Lorry --</option>
+              {% for l in lorries %}
+                <option value="{{ l.id }}">
+                  {{ l.capacity }} Ton
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-md-3 mb-3 text-end">
+              <!-- (Intentionally left blank: Save Booking moved to Materials section) -->    
+          </div>
+        </div>
+
+        <!-- Materials editor -->
+        <hr class="my-3">
+
+        <div class="border rounded p-3">
+          <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-3">
+            <div class="mb-2 mb-md-0">
+              <h5 class="mb-1">Materials</h5>
+              <small class="text-muted">
+                Every booking must include a material list. Use
+                <strong>Item-wise</strong> for Qty × Rate lines or
+                <strong>Lumpsum</strong> for summary entries.
+              </small>
+            </div>
+            <div class="ms-md-3" style="min-width: 220px;">
+              <label for="materialMode" class="form-label form-label-sm mb-1">Mode</label>
+              <select
+                class="form-select form-select-sm"
+                id="materialMode"
+                name="material_mode"
+              >
+                <option value="">-- No materials --</option>
+                <option value="ITEM">Item-wise</option>
+                <option value="LUMPSUM">Lumpsum</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Lines table -->
+          <div class="table-responsive mb-3">
+            <table class="table table-sm table-bordered align-middle mb-0">
+              <thead class="table-light">
+                <tr class="text-center">
+                  <th style="width: 40px;">Sl.</th>
+                  <th>Description</th>
+                  <th style="width: 90px;">Unit</th>
+                  <th style="width: 90px;">Qty</th>
+                  <!-- widened -->
+                  <th style="width: 140px;">Rate</th>
+                  <th style="width: 170px;">Amount</th>
+                  <th style="width: 40px;"></th>
+                </tr>
+              </thead>
+              <tbody id="materialLinesBody">
+                <!-- JS will create rows -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Totals + Add Row + Save at the bottom -->
+          <div class="row g-3 align-items-end">
+            <div class="col-md-5 d-none" id="materialTotalQtyGroup">
+              <div class="row g-2">
+                <div class="col-6">
+                  <label class="form-label form-label-sm mb-1">Total Qty</label>
+                  <input
+                    type="number"
+                    class="form-control form-control-sm"
+                    name="material_total_quantity"
+                    step="0.01"
+                    min="0"
+                    placeholder="e.g. 25.5"
+                  >
+                </div>
+                <div class="col-6">
+                  <label class="form-label form-label-sm mb-1">Unit</label>
+                  <input
+                    type="text"
+                    class="form-control form-control-sm"
+                    name="material_total_quantity_unit"
+                    maxlength="20"
+                    placeholder="e.g. MT"
+                  >
+                </div>
+              </div>
+            </div>
+
+            <div class="col-md-3">
+              <label class="form-label form-label-sm mb-1">Total Amount</label>
+              <input
+                type="number"
+                class="form-control form-control-sm"
+                name="material_total_amount"
+                step="0.01"
+                min="0"
+                placeholder="Auto / lumpsum"
+              >
+            </div>
+
+            <div class="col-md-4 text-md-end">
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-secondary me-2"
+                id="btnAddMaterialRow"
+              >
+                Add Row
+              </button>
+
+              <!-- New position for Save Booking -->
+              <button
+                type="submit"
+                class="btn btn-primary btn-sm"
+              >
+                Save Booking
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </form>
+
+  <!-- Booking history (last 5) -->
+  {% if booking_rows %}
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <div>
+          Recent Bookings
+          {% if booking_scope == 'active' and active_agreement %}
+            <small class="text-muted ms-2">
+              (Active agreement: {{ active_agreement.id }} – {{ active_agreement.company.name }})
+            </small>
+          {% endif %}
+        </div>
+        <form
+          method="get"
+          action="{{ url_for('admin.dashboard') }}#booking"
+          class="d-flex align-items-center mb-0"
+        >
+          <label for="bookingScopeSelect" class="form-label form-label-sm mb-0 me-2">
+            Show
+          </label>
+          <select
+            class="form-select form-select-sm"
+            id="bookingScopeSelect"
+            name="booking_scope"
+            onchange="this.form.submit()"
+          >
+            <option value="active" {% if booking_scope == 'active' %}selected{% endif %}>
+              Active agreement
+            </option>
+            <option value="all" {% if booking_scope == 'all' %}selected{% endif %}>
+              All agreements
+            </option>
+          </select>
+        </form>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive mb-0">
+          <table class="table table-bordered table-striped align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th style="width: 7%;">Trip</th>
+                <th style="width: 10%;">Booking Date</th>
+                <th style="width: 10%;">Placement</th>
+                <th style="width: 10%;">Lorry</th>
+                <th style="width: 18%;">From</th>
+                <th style="width: 18%;">Destination</th>
+                <th style="width: 8%;">KM</th>
+                <th style="width: 10%;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in booking_rows[:5] %}
+                {% set b = row.booking %}
+                <tr>
+
+                  <!-- Trip ID (NO modal link) -->
+                  <td class="text-nowrap">{{ row.trip_serial }}</td>
+
+                  <!-- Dates & Lorry -->
+                  <td class="text-nowrap">{{ b.booking_date }}</td>
+                  <td class="text-nowrap">{{ b.placement_date }}</td>
+                  <td class="text-nowrap">{{ b.lorry.capacity }} Ton</td>
+
+                  <!-- From / Dest -->
+                  <td>
+                    <span title="{{ row.from_display_long }}">{{ row.from_display_short }}</span>
+                  </td>
+                  <td>
+                    <span title="{{ row.dest_display_long }}">{{ row.dest_display_short }}</span>
+                  </td>
+
+                  <!-- KM -->
+                  <td class="text-nowrap">{{ b.trip_km }}</td>
+
+                  <!-- Actions -->
+                  <td class="text-center text-nowrap">
+
+                    <!-- DETAILS BUTTON (modal trigger) -->
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-primary px-2 me-1"
+                      data-bs-toggle="modal"
+                      data-bs-target="#bookingDetailModal"
+                      data-booking-id="{{ b.id }}"
+                      data-trip-serial="{{ row.trip_serial }}"
+                      data-booking-date="{{ b.booking_date }}"
+                      data-placement-date="{{ b.placement_date }}"
+                      data-company="{{ b.company.name }}"
+                      data-lorry="{{ b.lorry.capacity }} Ton"
+                      data-from="{{ row.from_display_long }}"
+                      data-dest="{{ row.dest_display_long }}"
+                      data-route="{{ b.route.name }}"
+                      data-trip-km="{{ b.trip_km }}"
+                    >
+                      Details
+                    </button>
+
+                    <!-- CANCEL BUTTON -->
+                    <form
+                      method="POST"
+                      action="{{ url_for('admin.cancel_booking', booking_id=b.id) }}"
+                      class="d-inline"
+                    >
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <input type="hidden" name="redirect_tab" value="#booking">
+
+                      {% if b.status == 'ACTIVE' %}
+                        <button
+                          type="submit"
+                          class="btn btn-sm btn-outline-danger px-2"
+                          onclick="return confirm('Cancel this booking?');"
+                        >
+                          Cancel
+                        </button>
+                      {% else %}
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline-secondary px-2"
+                          disabled
+                        >
+                          Cancelled
+                        </button>
+                      {% endif %}
+                    </form>
+
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  {% else %}
+    <p class="text-muted">No bookings added yet.</p>
+  {% endif %}
+
+  <div class="d-flex justify-content-end mt-2">
+    <div class="text-end">
+      <a
+        href="{{ url_for('admin.backdated_booking_view') }}"
+        class="btn btn-outline-danger btn-sm"
+      >
+        Backdated Booking…
+      </a>
+      <div class="small text-muted mt-1">
+        For post-facto entries when the field booking was done earlier.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Datalist for booking location search -->
+<datalist id="bookingLocationList">
+  {% for loc in all_locations %}
+    <option value="{{ loc.name }} [{{ loc.code }}]"></option>
+  {% endfor %}
+</datalist>
+
+<!-- Authority Picker Modal -->
+<div class="modal fade" id="authorityPickerModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg">
+    <div class="modal-content">
+      <div class="modal-header bg-primary text-white">
+        <h5 class="modal-title">Select Authorities</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="authorityPickerList" class="d-flex flex-column gap-2 mb-2">
+          <!-- JS injects authority checkboxes here -->
+        </div>
+        <div id="authorityPickerEmpty" class="text-muted small d-none mb-2">
+          No authorities found for this location.
+        </div>
+
+        <hr class="my-3">
+
+        <div class="mb-2">
+          <h6 class="mb-2">Add new authority at this location</h6>
+          <div class="row g-2 align-items-end">
+            <div class="col-md-5">
+              <label for="newAuthorityTitle" class="form-label form-label-sm mb-1">Designation</label>
+              <input type="text" class="form-control form-control-sm" id="newAuthorityTitle"
+                     placeholder="e.g. Station Master" />
+            </div>
+            <div class="col-md-5">
+              <label for="newAuthorityAddress" class="form-label form-label-sm mb-1">Address (optional)</label>
+              <input type="text" class="form-control form-control-sm" id="newAuthorityAddress"
+                     placeholder="Office / contact details" />
+            </div>
+            <div class="col-md-2">
+              <button type="button" class="btn btn-sm btn-success w-100 mt-4" id="btnAddAuthority">
+                Add
+              </button>
+            </div>
+          </div>
+          <div class="small mt-1" id="newAuthorityStatus"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" id="applyAuthoritySelection" class="btn btn-primary">
+          Apply Selection
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bridge: server → JS -->
+<script>
+  window.BOOKING_AUTH_BY_CODE = {{ booking_auth_map|tojson }};
+  window.FLASK_QUICK_ADD_AUTHORITY_URL = "{{ url_for('admin.quick_add_authority') }}";
+  window.FLASK_BOOKING_MATERIALS_URL_TEMPLATE =
+    "{{ url_for('admin.booking_materials_json', booking_id=0) | replace('0', '__ID__') }}";
+</script>

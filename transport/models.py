@@ -1,4 +1,5 @@
 from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime, date
 
 db = SQLAlchemy()
 
@@ -34,7 +35,7 @@ class LorryDetails(db.Model):
     __tablename__ = "lorry_details"
 
     id = db.Column(db.Integer, primary_key=True)
-    capacity = db.Column(db.String(50), nullable=False)
+    capacity = db.Column(db.Integer, nullable=False)
     carrier_size = db.Column(db.String(50), nullable=False)
     number_of_wheels = db.Column(db.Integer, nullable=False)
     remarks = db.Column(db.String(200))
@@ -134,4 +135,179 @@ class RouteStop(db.Model):
         return (
             f"<RouteStop route={self.route_id} seq={self.sequence_index} "
             f"loc={self.location_id} start={self.is_start_cluster} end={self.is_end_cluster}>"
+        )
+
+class AppConfig(db.Model):
+    __tablename__ = "app_config"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    home_location_id = db.Column(db.Integer, db.ForeignKey("location.id"))
+    home_authority_id = db.Column(db.Integer, db.ForeignKey("authority.id"))
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    home_location = db.relationship("Location", foreign_keys=[home_location_id])
+    home_authority = db.relationship("Authority", foreign_keys=[home_authority_id])
+
+    def __repr__(self):
+        return f"<AppConfig home_location={self.home_location_id} home_authority={self.home_authority_id}>"
+
+class Booking(db.Model):
+    __tablename__ = "booking"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    agreement_id = db.Column(db.Integer, db.ForeignKey("agreement.id"), nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey("company.id"), nullable=False)
+    lorry_id = db.Column(db.Integer, db.ForeignKey("lorry_details.id"), nullable=False)
+
+    # Route ALWAYS present (matched/created from sequence)
+    route_id = db.Column(db.Integer, db.ForeignKey("route.id"), nullable=False)
+
+    # Either from the route (if matched) or supplied by user
+    trip_km = db.Column(db.Integer, nullable=False)
+
+    # When the lorry is actually required / placed
+    placement_date = db.Column(db.Date, nullable=False, default=date.today)
+
+    booking_date = db.Column(db.Date, nullable=False, default=date.today)
+
+    remarks = db.Column(db.String(250))
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    # -------------------------
+    # Soft delete / status flags
+    # -------------------------
+    # ACTIVE  – normal booking
+    # CANCELLED – soft-deleted, must remain in DB
+    status = db.Column(db.String(20), nullable=False, default="ACTIVE", index=True)
+
+    cancelled_at = db.Column(db.DateTime)
+    cancel_reason = db.Column(db.String(255))
+
+    # convenience relationships
+    agreement = db.relationship("Agreement")
+    company = db.relationship("Company")
+    lorry = db.relationship("LorryDetails")
+    route = db.relationship("Route")
+
+    def __repr__(self):
+        return f"<Booking id={self.id} route={self.route_id} km={self.trip_km}>"
+    
+    def cancel(self, reason: str | None = None):
+        self.status = "CANCELLED"
+        self.cancelled_at = datetime.utcnow()
+        self.cancel_reason = (reason or "").strip() or None
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self.status == "CANCELLED"
+
+
+class BookingAuthority(db.Model):
+    __tablename__ = "booking_authority"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    booking_id = db.Column(db.Integer, db.ForeignKey("booking.id"), nullable=False)
+    authority_id = db.Column(db.Integer, db.ForeignKey("authority.id"), nullable=False)
+
+    # 'LOADING' or 'UNLOADING'
+    role = db.Column(db.String(20), nullable=False)
+
+    # ordering for letters (1,2,3...)
+    sequence_index = db.Column(db.Integer, nullable=False, default=1)
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    booking = db.relationship("Booking", backref="booking_authorities")
+    authority = db.relationship("Authority")
+
+    def __repr__(self):
+        return f"<BookingAuthority booking={self.booking_id} authority={self.authority_id} role={self.role}>"
+
+class BookingMaterial(db.Model):
+    __tablename__ = "booking_material"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # One material table per booking (1:1)
+    booking_id = db.Column(
+        db.Integer,
+        db.ForeignKey("booking.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,         # enforce 1:1 at DB level
+    )
+
+    # Modes:
+    #   "ITEM"     → item-wise detailed list
+    #   "LUMPSUM"  → descriptive list + booking-level totals
+    mode = db.Column(db.String(10), nullable=False, default="ITEM")
+
+    # Header totals (only meaningful for LUMPSUM, automatically derived in ITEM)
+    total_quantity = db.Column(db.Float)               # overall quantity if applicable
+    total_quantity_unit = db.Column(db.String(50))     # "Ton", "MT", "Pkg", etc.
+    total_amount = db.Column(db.Float)                 # total amount for booking
+
+    # ORM relationships
+    booking = db.relationship(
+        "Booking",
+        backref=db.backref("material_table", uselist=False),
+        lazy="joined"
+    )
+
+    lines = db.relationship(
+        "BookingMaterialLine",
+        backref="material_table",
+        cascade="all, delete-orphan",
+        order_by="BookingMaterialLine.sequence_index",
+        lazy="joined"
+    )
+
+    def __repr__(self):
+        return f"<BookingMaterial booking={self.booking_id} mode={self.mode}>"
+
+class BookingMaterialLine(db.Model):
+    __tablename__ = "booking_material_line"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    booking_material_id = db.Column(
+        db.Integer,
+        db.ForeignKey("booking_material.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    # Sl.No / ordering
+    sequence_index = db.Column(db.Integer, nullable=False, default=1)
+
+    # Always required
+    description = db.Column(db.String(250), nullable=False)
+
+    # Optional: quantity details
+    unit = db.Column(db.String(50))        # e.g., "Ton", "Pkg"
+    quantity = db.Column(db.Float)         # optional, per-line
+
+    # Item-wise only
+    rate = db.Column(db.Float)             # optional
+    amount = db.Column(db.Float)           # optional (qty * rate for ITEM)
+
+    def __repr__(self):
+        return (
+            f"<BookingMaterialLine tbl={self.booking_material_id} sl={self.sequence_index} "
+            f"desc='{self.description}'>"
         )

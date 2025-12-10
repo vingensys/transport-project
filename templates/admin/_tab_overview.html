@@ -1,0 +1,235 @@
+<div class="container-fluid">
+
+  {% if not active_agreement %}
+    <div class="alert alert-info mt-2">
+      No active agreement is set. Activate an LOA to see the overview.
+    </div>
+  {% elif not overview_summary %}
+    <div class="alert alert-warning mt-2">
+      No utilisation data available for the active agreement.
+    </div>
+  {% else %}
+
+    {% set total_mt_km = overview_summary.total_mt_km or 0 %}
+    {% set utilised_mt_km = overview_summary.utilised_mt_km or 0 %}
+    {% set utilisation_pct = overview_summary.utilisation_pct or 0 %}
+    {% set rate = overview_summary.rate_per_mt_km or 0 %}
+    {% set agreement_amount = overview_summary.agreement_amount or 0 %}
+    {% set amount_booked = overview_summary.amount_booked or 0 %}
+    {% set blocked_mt_km = overview_summary.blocked_mt_km or 0 %}
+
+    {# Clamp utilisation for visualisation (0–150%) #}
+    {% if utilisation_pct < 0 %}
+      {% set vis_pct = 0 %}
+    {% elif utilisation_pct > 150 %}
+      {% set vis_pct = 150 %}
+    {% else %}
+      {% set vis_pct = utilisation_pct %}
+    {% endif %}
+
+    {# Convert 0–150% utilisation to 0–100% width for the bar #}
+    {% set overlay_width = (vis_pct * 100.0 / 150.0) %}
+
+    {# Choose bar colour based on utilisation bands #}
+    {% if utilisation_pct <= 125 %}
+      {% set progress_class = "bg-success" %}
+    {% elif utilisation_pct <= 140 %}
+      {% set progress_class = "bg-warning" %}
+    {% elif utilisation_pct <= 150 %}
+      {% set progress_class = "bg-danger" %}
+    {% else %}
+      {% set progress_class = "bg-danger" %}
+    {% endif %}
+
+    <!-- Top stat cards -->
+    <div class="row g-3 mb-3">
+
+      <!-- LOA / Agency -->
+      <div class="col-md-4">
+        <div class="card shadow-sm border-0 h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <span class="text-muted text-uppercase small fw-semibold">Active LOA</span>
+              <span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle">
+                Live
+              </span>
+            </div>
+            <div class="h5 mb-1">
+              {{ overview_summary.loa_number or '—' }}
+            </div>
+            <div class="small text-muted">
+              Agency:
+              <strong>{{ overview_summary.agency_name or '-' }}</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MT-Km utilisation (emphasis on %) -->
+      <div class="col-md-4">
+        <div class="card shadow-sm border-0 h-100">
+          <div class="card-body">
+            <div class="text-muted text-uppercase small fw-semibold mb-1">
+              MT-Km Utilisation
+            </div>
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <div>
+                <div class="small text-muted">Utilised</div>
+                <div class="h6 mb-0">
+                  {{ '%.2f'|format(utilised_mt_km) }}
+                </div>
+              </div>
+              <div class="text-end">
+                <div class="small text-muted">Contracted</div>
+                <div class="h6 mb-0">
+                  {{ '%.2f'|format(total_mt_km) }}
+                </div>
+              </div>
+            </div>
+            <div class="mt-2">
+              <div class="small text-muted mb-1">Utilisation %</div>
+              <div class="d-flex justify-content-between align-items-center">
+                <div class="display-6 mb-0" style="font-size: 1.9rem;">
+                  {{ '%.2f'|format(utilisation_pct) }}%
+                </div>
+                <div class="flex-grow-1 ms-3">
+                  <div class="progress" style="height: 0.85rem;">
+                    <div
+                      class="progress-bar {{ progress_class }}"
+                      role="progressbar"
+                      style="width: {{ overlay_width }}%;"
+                      aria-valuenow="{{ overlay_width }}"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                    ></div>
+                  </div>
+                  <div class="d-flex justify-content-between small text-muted mt-1">
+                    <span>0%</span>
+                    <span>125%</span>
+                    <span>140%</span>
+                    <span>150%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {% if blocked_mt_km and blocked_mt_km > 0 %}
+              <div class="small text-danger mt-1">
+                {{ '%.2f'|format(blocked_mt_km) }} MT-Km lies beyond the 150% cap (not payable).
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Financial snapshot (rate highlighted) -->
+      <div class="col-md-4">
+        <div class="card shadow-sm border-0 h-100">
+          <div class="card-body">
+            <div class="text-muted text-uppercase small fw-semibold mb-1">
+              Financial Snapshot
+            </div>
+
+            <div class="row g-2 mb-2">
+              <div class="col-6">
+                <div class="small text-muted">Rate (₹ / MT-Km)</div>
+                <div class="h5 mb-0 text-primary">
+                  {{ '%.2f'|format(rate) }}
+                </div>
+              </div>
+              <div class="col-6 text-end">
+                <div class="small text-muted">Booked (slabbed)</div>
+                <div class="h5 mb-0 text-primary">
+                  ₹{{ '%.2f'|format(amount_booked) }}
+                </div>
+              </div>
+            </div>
+
+            <div class="d-flex justify-content-between align-items-end">
+              <div>
+                <div class="small text-muted">Agreement Amount</div>
+                <div class="h6 mb-0">
+                  ₹{{ '%.2f'|format(agreement_amount) }}
+                </div>
+              </div>
+              <div class="text-end small text-muted">
+                Based on slabbed rates<br>
+                up to 150% MT-Km cap.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Trip-wise table -->
+    <div class="card shadow-sm border-0">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <span>Trips under LOA {{ overview_summary.loa_number }}</span>
+        <small class="text-muted">
+          Non-cancelled bookings only · MT-Km = Route KM × Lorry Capacity
+        </small>
+      </div>
+      <div class="card-body p-0">
+        {% if overview_rows %}
+          <div class="table-responsive mb-0">
+            <table class="table table-bordered table-striped align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th style="width: 6%;">Trip ID</th>
+                  <th style="width: 9%;">Booking Date</th>
+                  <th style="width: 9%;">Placement Date</th>
+                  <th style="width: 12%;">From (Codes)</th>
+                  <th style="width: 12%;">To (Codes)</th>
+                  <th style="width: 8%;">Route KM</th>
+                  <th style="width: 10%;">Lorry Cap. (Ton)</th>
+                  <th style="width: 10%;">MT-Km</th>
+                  <th style="width: 14%;">Amount for Trip (₹)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in overview_rows %}
+                  <tr>
+                    <td class="text-nowrap">
+                      {{ row.trip_serial }}
+                    </td>
+                    <td class="text-nowrap">
+                      {{ row.booking_date }}
+                    </td>
+                    <td class="text-nowrap">
+                      {{ row.placement_date }}
+                    </td>
+                    <td class="text-nowrap">
+                      {{ row.from_codes }}
+                    </td>
+                    <td class="text-nowrap">
+                      {{ row.to_codes }}
+                    </td>
+                    <td class="text-end text-nowrap">
+                      {{ row.route_km or 0 }}
+                    </td>
+                    <td class="text-end text-nowrap">
+                      {{ row.lorry_capacity or 0 }}
+                    </td>
+                    <td class="text-end text-nowrap">
+                      {{ '%.2f'|format(row.trip_mt_km) }}
+                    </td>
+                    <td class="text-end text-nowrap">
+                      {{ '%.2f'|format(row.amount) }}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="text-muted m-3 mb-2">
+            No non-cancelled bookings under the active agreement yet.
+          </p>
+        {% endif %}
+      </div>
+    </div>
+
+  {% endif %}
+
+</div>

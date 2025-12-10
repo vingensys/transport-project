@@ -1,20 +1,18 @@
 <h5 class="mb-3">Agreements</h5>
 
-<p class="text-muted">
-  Agreement module will be implemented here (forms and actions later).
-</p>
-
 <!-- Add Agreement Form -->
 <div class="card mb-4">
   <div class="card-header">Add Agreement</div>
   <div class="card-body">
     <form method="POST" action="{{ url_for('admin.add_agreement') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
       <div class="row g-3">
-        
+
         <div class="col-md-3">
           <label class="form-label">Company</label>
           <select name="company_id" class="form-select" required>
-            <option value="">Select...</option>
+            <option value="">-- Select Company --</option>
             {% for c in companies %}
               <option value="{{ c.id }}">{{ c.name }}</option>
             {% endfor %}
@@ -28,14 +26,13 @@
 
         <div class="col-md-3">
           <label class="form-label">Total MT-KM</label>
-          <input class="form-control" type="number" step="0.01" name="total_mt_km" required>
+          <input type="number" min="1" class="form-control" name="total_mt_km" required>
         </div>
 
         <div class="col-md-3">
           <label class="form-label">Rate / MT-KM</label>
-          <input class="form-control" type="number" step="0.000001" name="rate_per_mt_km" required>
+          <input type="number" step="0.01" min="0" class="form-control" name="rate_per_mt_km" required>
         </div>
-
       </div>
 
       <button class="btn btn-primary mt-3">Add Agreement</button>
@@ -44,15 +41,16 @@
 </div>
 
 {% if agreements %}
-  <table class="table table-sm table-bordered align-middle mt-3">
+  <table class="table table-sm table-bordered align-middle">
     <thead class="table-light">
       <tr>
-        <th style="width: 60px;">ID</th>
+        <th style="width: 50px;">ID</th>
         <th>Company</th>
         <th>LOA Number</th>
-        <th style="width: 140px;">Total MT-KM</th>
-        <th style="width: 140px;">Rate / MT-KM</th>
-        <th style="width: 80px;">Active</th>
+        <th style="width: 120px;">Total MT-KM</th>
+        <th style="width: 120px;">Rate / MT-KM</th>
+        <th style="width: 60px;">Active</th>
+        <th style="width: 280px;">Actions</th>
       </tr>
     </thead>
     <tbody>
@@ -80,14 +78,16 @@
           </button>
 
           {% if not ag.is_active %}
-            <form method="POST" action="{{ url_for('admin.activate_agreement', agreement_id=ag.id) }}"
+            <form method="POST"
+                  action="{{ url_for('admin.activate_agreement', agreement_id=ag.id) }}"
                   style="display:inline-block;">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button class="btn btn-sm btn-outline-success">
                 Make Active
               </button>
             </form>
           {% else %}
-            <span class="badge bg-success">Active</span>
+            <span class="badge bg-success ms-1">Active</span>
           {% endif %}
         </td>
       </tr>
@@ -97,6 +97,8 @@
         <div class="modal-dialog">
           <div class="modal-content">
             <form method="POST" action="{{ url_for('admin.edit_agreement', agreement_id=ag.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
               <div class="modal-header">
                 <h5 class="modal-title">Edit Agreement #{{ ag.id }}</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
@@ -121,17 +123,21 @@
 
                 <div class="mb-3">
                   <label class="form-label">Total MT-KM</label>
-                  <input class="form-control" type="number" step="0.01" name="total_mt_km" value="{{ ag.total_mt_km }}">
+                  <input type="number" min="1" class="form-control" name="total_mt_km"
+                         value="{{ ag.total_mt_km }}">
                 </div>
 
                 <div class="mb-3">
                   <label class="form-label">Rate / MT-KM</label>
-                  <input class="form-control" type="number" step="0.000001" name="rate_per_mt_km" value="{{ ag.rate_per_mt_km }}">
+                  <input type="number" step="0.01" min="0" class="form-control" name="rate_per_mt_km"
+                         value="{{ ag.rate_per_mt_km }}">
                 </div>
               </div>
 
               <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                  Cancel
+                </button>
                 <button class="btn btn-primary">Save Changes</button>
               </div>
             </form>
@@ -143,5 +149,5 @@
     </tbody>
   </table>
 {% else %}
-  <p class="text-muted mt-2">No agreements added yet.</p>
+  <p class="text-muted">No agreements added yet.</p>
 {% endif %}
