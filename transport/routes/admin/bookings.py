@@ -23,6 +23,7 @@ def _redirect_to_tab(tab_hash: str):
     """Redirect back to a specific dashboard tab (e.g., '#booking')."""
     return redirect(url_for("admin.dashboard") + tab_hash)
 
+
 def _normalize_codes(codes):
     """Strip and uppercase location codes, dropping blanks."""
     return [c.strip().upper() for c in codes if c and c.strip()]
@@ -538,6 +539,7 @@ def add_booking():
     flash("Booking saved successfully.", "success")
     return _redirect_to_tab("#booking")
 
+
 @admin_bp.route("/booking/backdated", methods=["GET"])
 def backdated_booking_view():
     """
@@ -578,6 +580,7 @@ def backdated_booking_view():
         all_locations=all_locations,
         booking_auth_map=booking_auth_map,
     )
+
 
 @admin_bp.route("/booking/backdated-add", methods=["POST"])
 def add_backdated_booking():
@@ -677,6 +680,7 @@ def add_backdated_booking():
     flash("Backdated booking recorded successfully.", "success")
     return _redirect_to_tab("#booking")
 
+
 @admin_bp.route("/booking/<int:booking_id>/materials-json", methods=["GET"])
 def booking_materials_json(booking_id: int):
     booking = Booking.query.get_or_404(booking_id)
@@ -716,7 +720,7 @@ def booking_materials_json(booking_id: int):
         {
             "success": True,
             "has_materials": True,
-            "mode": material.mode, 
+            "mode": material.mode,
             "header": header_payload,
             "lines": lines_payload,
         }
@@ -727,10 +731,29 @@ def booking_materials_json(booking_id: int):
 def cancel_booking(booking_id):
     booking = Booking.query.get_or_404(booking_id)
 
+    # Read redirect tab + optional history filters
+    redirect_tab = request.form.get("redirect_tab") or "#booking"
+    booking_scope = (request.form.get("booking_scope") or "").strip()
+    booking_status = (request.form.get("booking_status") or "").strip()
+    booking_search = (request.form.get("booking_search") or "").strip()
+
+    def _redirect_after_cancel():
+        # When cancelling from History tab, preserve filters
+        if redirect_tab == "#history":
+            params = {}
+            if booking_scope:
+                params["booking_scope"] = booking_scope
+            if booking_status:
+                params["booking_status"] = booking_status
+            if booking_search:
+                params["booking_search"] = booking_search
+            return redirect(url_for("admin.dashboard", **params) + redirect_tab)
+        # Fallback: original behaviour
+        return _redirect_to_tab(redirect_tab)
+
     if booking.status == "CANCELLED":
         flash("Booking already cancelled.", "info")
-        redirect_tab = request.form.get("redirect_tab") or "#booking"
-        return _redirect_to_tab(redirect_tab)
+        return _redirect_after_cancel()
 
     reason = (request.form.get("cancel_reason") or "").strip() or None
 
@@ -741,18 +764,29 @@ def cancel_booking(booking_id):
     db.session.commit()
     flash(f"Booking {booking.id} cancelled.", "success")
 
-    redirect_tab = request.form.get("redirect_tab") or "#booking"
-    return _redirect_to_tab(redirect_tab)
+    return _redirect_after_cancel()
+
 
 @admin_bp.route("/booking/<int:booking_id>", methods=["GET", "POST"])
 def booking_detail(booking_id):
     """View / edit a booking (safe fields only: placement_date, lorry)."""
     booking = Booking.query.get_or_404(booking_id)
 
+    def _redirect_self_with_filters():
+        """Redirect back to this detail view, preserving any history filters in the query string."""
+        params = {
+            "booking_id": booking.id,
+            "booking_scope": request.args.get("booking_scope"),
+            "booking_status": request.args.get("booking_status"),
+            "booking_search": request.args.get("booking_search"),
+        }
+        params = {k: v for k, v in params.items() if v}
+        return redirect(url_for("admin.booking_detail", **params))
+
     # Disallow edits on cancelled bookings
     if booking.status == "CANCELLED" and request.method == "POST":
         flash("Cancelled bookings cannot be edited.", "error")
-        return redirect(url_for("admin.booking_detail", booking_id=booking.id))
+        return _redirect_self_with_filters()
 
     # We'll let the user change placement_date + lorry_id only
     # Everything else is read-only for audit reasons.
@@ -795,7 +829,7 @@ def booking_detail(booking_id):
             booking.lorry_id = lorry.id
             db.session.commit()
             flash("Booking updated successfully.", "success")
-            return redirect(url_for("admin.booking_detail", booking_id=booking.id))
+            return _redirect_self_with_filters()
 
     siblings = (
         Booking.query.filter_by(agreement_id=booking.agreement_id)

@@ -1,40 +1,100 @@
 <div class="container-fluid">
 
+  <style>
+    .inbound-row {
+      background-color: rgba(0, 123, 255, 0.08);   /* light blue tint */
+    }
+    .outbound-row {
+      background-color: rgba(255, 193, 7, 0.15);   /* light amber tint */
+    }
+    .home-row {
+      background-color: rgba(108, 117, 125, 0.12); /* light grey tint */
+    }
+  </style>
+
   <h4 class="mb-3">Booking History</h4>
 
   <div class="card">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <div>
-        All Bookings
-        {% if active_agreement %}
-          <small class="text-muted ms-2">
-            (Active agreement: {{ active_agreement.id }} – {{ active_agreement.company.name }})
-          </small>
-        {% endif %}
-      </div>
+    <div class="card-header">
+      <div class="row align-items-center gy-2">
+        <div class="col-lg-4 col-md-12">
+          <div>
+            All Bookings
+            {% if active_agreement %}
+              <small class="text-muted ms-1 d-block d-lg-inline">
+                (Active agreement: {{ active_agreement.id }} –
+                {{ active_agreement.company.name }})
+              </small>
+            {% endif %}
+          </div>
+        </div>
 
-      <form
-        method="get"
-        action="{{ url_for('admin.dashboard') }}#history"
-        class="d-flex align-items-center mb-0"
-      >
-        <label for="historyScopeSelect" class="form-label form-label-sm mb-0 me-2">
-          Scope
-        </label>
-        <select
-          class="form-select form-select-sm"
-          id="historyScopeSelect"
-          name="booking_scope"
-          onchange="this.form.submit()"
-        >
-          <option value="active" {% if booking_scope == 'active' %}selected{% endif %}>
-            Active agreement
-          </option>
-          <option value="all" {% if booking_scope == 'all' %}selected{% endif %}>
-            All agreements
-          </option>
-        </select>
-      </form>
+        <div class="col-lg-8 col-md-12">
+          <form
+            method="get"
+            action="{{ url_for('admin.dashboard') }}#history"
+            class="row g-2 align-items-end"
+          >
+            <!-- Scope -->
+            <div class="col-md-4">
+              <label for="historyScopeSelect" class="form-label mb-1">
+                Scope
+              </label>
+              <select
+                class="form-select form-select-sm"
+                id="historyScopeSelect"
+                name="booking_scope"
+              >
+                <option value="active" {% if booking_scope == 'active' %}selected{% endif %}>
+                  Active agreement
+                </option>
+                <option value="all" {% if booking_scope == 'all' %}selected{% endif %}>
+                  All agreements
+                </option>
+              </select>
+            </div>
+
+            <!-- Status -->
+            <div class="col-md-3">
+              <label for="historyStatusSelect" class="form-label mb-1">
+                Status
+              </label>
+              <select
+                class="form-select form-select-sm"
+                id="historyStatusSelect"
+                name="booking_status"
+              >
+                <option value="all" {% if booking_status == 'all' %}selected{% endif %}>All</option>
+                <option value="active" {% if booking_status == 'active' %}selected{% endif %}>Active</option>
+                <option value="cancelled" {% if booking_status == 'cancelled' %}selected{% endif %}>Cancelled</option>
+              </select>
+            </div>
+
+            <!-- Search -->
+            <div class="col-md-3">
+              <label for="historySearchInput" class="form-label mb-1">
+                Search
+              </label>
+              <input
+                type="text"
+                id="historySearchInput"
+                name="booking_search"
+                class="form-control form-control-sm"
+                placeholder="Trip / Booking ID"
+                value="{{ booking_search or '' }}"
+              >
+            </div>
+
+            <!-- Apply button -->
+            <div class="col-md-2 d-grid">
+              <label class="form-label mb-1 invisible">Apply</label>
+              <button type="submit" class="btn btn-sm btn-primary">
+                Apply
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
     </div>
 
     <div class="card-body p-0">
@@ -50,14 +110,24 @@
                 <th style="width: 18%;">From (Authority / Location)</th>
                 <th style="width: 18%;">Destination (Authority / Location)</th>
                 <th style="width: 8%;">KM</th>
-                <th style="width: 8%;">Status</th>
+                <th style="width: 12%;">Status</th>
                 <th style="width: 14%;" class="text-center">Actions</th>
               </tr>
             </thead>
             <tbody>
               {% for row in booking_rows %}
                 {% set b = row.booking %}
-                <tr>
+
+                {% set row_class = "" %}
+                {% if row.direction == "INBOUND" %}
+                  {% set row_class = "inbound-row" %}
+                {% elif row.direction == "OUTBOUND" %}
+                  {% set row_class = "outbound-row" %}
+                {% elif row.direction == "HOME" %}
+                  {% set row_class = "home-row" %}
+                {% endif %}
+
+                <tr class="{{ row_class }}">
                   <!-- Trip ID -->
                   <td class="text-nowrap">{{ row.trip_serial }}</td>
 
@@ -66,7 +136,13 @@
                   <td class="text-nowrap">{{ b.placement_date }}</td>
 
                   <!-- Lorry -->
-                  <td class="text-nowrap">{{ b.lorry.capacity }} Ton</td>
+                  <td class="text-nowrap">
+                    {% if b.lorry %}
+                      {{ b.lorry.capacity }} Ton
+                    {% else %}
+                      -
+                    {% endif %}
+                  </td>
 
                   <!-- From / Dest -->
                   <td>
@@ -89,11 +165,11 @@
                   <!-- KM -->
                   <td class="text-nowrap">{{ b.trip_km }}</td>
 
-                  <!-- Status -->
+                  <!-- Status (no direction badge here to avoid clutter) -->
                   <td class="text-nowrap">
                     {% if b.status == 'CANCELLED' %}
                       <span class="badge bg-danger">Cancelled</span>
-                    {% elif b.status == 'ACTIVE' %}
+                    {% elif b.status == 'ACTIVE' or not b.status %}
                       <span class="badge bg-success">Active</span>
                     {% else %}
                       <span class="badge bg-secondary">{{ b.status }}</span>
@@ -113,7 +189,7 @@
                       data-booking-date="{{ b.booking_date }}"
                       data-placement-date="{{ b.placement_date }}"
                       data-company="{{ b.company.name }}"
-                      data-lorry="{{ b.lorry.capacity }} Ton"
+                      data-lorry="{% if b.lorry %}{{ b.lorry.capacity }} Ton{% else %}-{% endif %}"
                       data-from="{{ row.from_display_long }}"
                       data-dest="{{ row.dest_display_long }}"
                       data-route="{{ b.route.name }}"
@@ -128,10 +204,13 @@
                       action="{{ url_for('admin.cancel_booking', booking_id=b.id) }}"
                       class="d-inline"
                     >
-                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                       <input type="hidden" name="redirect_tab" value="#history">
+                      <!-- preserve filters -->
+                      <input type="hidden" name="booking_scope" value="{{ booking_scope }}">
+                      <input type="hidden" name="booking_status" value="{{ booking_status }}">
+                      <input type="hidden" name="booking_search" value="{{ booking_search }}">
 
-                      {% if b.status == 'ACTIVE' %}
+                      {% if b.status != 'CANCELLED' %}
                         <button
                           type="submit"
                           class="btn btn-sm btn-outline-danger px-2 me-1"
@@ -150,12 +229,16 @@
                       {% endif %}
                     </form>
 
-                    <!-- View/Edit stub – to be wired later -->
+                    <!-- View/Edit in separate page, preserving filters in query string -->
                     <a
-                        href="{{ url_for('admin.booking_detail', booking_id=b.id) }}"
-                        class="btn btn-sm btn-outline-secondary px-2"
+                      href="{{ url_for('admin.booking_detail',
+                                        booking_id=b.id,
+                                        booking_scope=booking_scope,
+                                        booking_status=booking_status,
+                                        booking_search=booking_search) }}"
+                      class="btn btn-sm btn-outline-secondary px-2"
                     >
-                        View / Edit
+                      View / Edit
                     </a>
 
                   </td>

@@ -310,3 +310,15 @@ body[data-theme="orange"] {
   border-color: #c05621;
   color: #c05621;
 }
+
+.inbound-row {
+  background-color: rgba(0, 123, 255, 0.08);   /* light blue tint */
+}
+
+.outbound-row {
+  background-color: rgba(255, 193, 7, 0.15);   /* light amber tint */
+}
+
+.home-row {
+  background-color: rgba(108, 117, 125, 0.12); /* light grey tint */
+}
