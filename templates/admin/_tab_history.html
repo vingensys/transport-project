@@ -204,7 +204,10 @@
                       action="{{ url_for('admin.cancel_booking', booking_id=b.id) }}"
                       class="d-inline"
                     >
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
                       <input type="hidden" name="redirect_tab" value="#history">
+
                       <!-- preserve filters -->
                       <input type="hidden" name="booking_scope" value="{{ booking_scope }}">
                       <input type="hidden" name="booking_status" value="{{ booking_status }}">

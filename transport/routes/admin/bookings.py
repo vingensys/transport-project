@@ -1,5 +1,6 @@
 from flask import request, redirect, url_for, flash, jsonify, render_template
 from datetime import date, datetime
+from typing import Optional, Tuple
 
 from transport.models import (
     db,
@@ -31,7 +32,7 @@ def _normalize_codes(codes):
 
 def _parse_materials_from_request():
     """
-    Parse and validate materials from request.form.
+    Parse and validate materials from request.form (booking creation forms).
 
     Returns a dict:
       {
@@ -227,6 +228,266 @@ def _parse_materials_from_request():
     return material_payload
 
 
+def _parse_materials_for_booking():
+    """
+    Wrapper that converts the single-table material payload
+    into a canonical structure.
+
+    For now we still have a single "base" material definition which
+    will be applied to all scopes ((FROM, TO) pairs, or FROM-only, etc).
+
+    Returns:
+      {
+        "per_authority": {
+            None: <single material_payload dict>
+        }
+      }
+
+    On validation error: returns None.
+    """
+    material_payload = _parse_materials_from_request()
+    if material_payload is None:
+        return None
+
+    return {
+        "per_authority": {
+            None: material_payload,
+        }
+    }
+
+
+def _rebuild_material_from_block(
+    material: BookingMaterial,
+    block: dict,
+    sequence_index: int,
+) -> None:
+    """
+    Fill an existing or newly created BookingMaterial from a parsed material block.
+    Clears and rebuilds its lines.
+
+    This is used for both creation and edit; on edit we overwrite existing content.
+    """
+    material.mode = block.get("mode")
+    material.sequence_index = sequence_index
+
+    material.total_quantity = block.get("total_quantity")
+    material.total_quantity_unit = block.get("total_quantity_unit")
+    material.total_amount = block.get("total_amount")
+
+    # Clear existing lines via the relationship collection
+    material.lines[:] = []
+
+    lines_data = block.get("lines") or []
+
+    total_amount_from_lines = 0.0
+    line_index = 1
+
+    for line_block in lines_data:
+        if not line_block:
+            continue
+
+        desc = (line_block.get("description") or "").strip()
+        if not desc:
+            # Only description is strictly required; skip truly empty rows.
+            continue
+
+        line = BookingMaterialLine(
+            sequence_index=line_index,
+            description=desc,
+            unit=line_block.get("unit") or None,
+            quantity=line_block.get("quantity"),
+            rate=line_block.get("rate"),
+            amount=line_block.get("amount"),
+        )
+        material.lines.append(line)
+        line_index += 1
+
+        if line.amount is not None:
+            try:
+                total_amount_from_lines += float(line.amount)
+            except (TypeError, ValueError):
+                # Already validated earlier; if something weird sneaks in,
+                # just ignore it here.
+                pass
+
+    # For ITEM mode, header total_amount is always derived from lines.
+    if material.mode == "ITEM":
+        material.total_amount = total_amount_from_lines if material.lines else None
+
+
+def _compute_route_order_for_booking(booking: Booking) -> dict:
+    """
+    Return {location_id: sequence_index} for the booking's route, if available.
+    Used to ensure FROM comes before TO when building (from, to) pairs.
+    """
+    route = getattr(booking, "route", None)
+    if not route:
+        return {}
+
+    order: dict[int, int] = {}
+    # Relationship name is `stops` on Route
+    for rs in route.stops:
+        # sequence_index is guaranteed non-null in the model, but be defensive
+        order[rs.location_id] = rs.sequence_index or 0
+    return order
+
+
+
+def _apply_materials_payload_to_booking(
+    booking: Booking,
+    loading_bas_unused: list[BookingAuthority],
+    materials_payload: dict | None,
+    replace_existing: bool = False,
+):
+    """
+    Given a Booking with its BookingAuthority rows already created,
+    apply the materials_payload to create or update BookingMaterial and lines.
+
+    GENERALIZED SCOPE SEMANTICS:
+
+      Scope of a single BookingMaterial is:
+          (FROM BookingAuthority, TO BookingAuthority)
+
+      where either side may be NULL, giving four cases:
+
+        (FROM, TO)         full pair (most detailed)
+        (FROM, None)       FROM-only scope
+        (None, TO)         TO-only scope
+        (None, None)       booking-level (no authorities)
+
+    SCOPE SELECTION:
+
+      - If both LOADING and UNLOADING exist:
+            create one scope per (LOADING, UNLOADING) pair
+            where the FROM location appears before the TO location
+            along the booking route. If no such pairs exist (odd data),
+            fall back to FROM-only scopes.
+
+      - If only LOADING:
+            one scope per LOADING BA (FROM-only)
+
+      - If only UNLOADING:
+            one scope per UNLOADING BA (TO-only)
+
+      - If neither:
+            single booking-level scope (None, None)
+
+    EDIT vs CREATION:
+
+      - replace_existing=False (creation):
+            build materials for desired scopes. Reuse existing ones
+            if any (usually none during first creation), otherwise create.
+
+      - replace_existing=True (edit):
+            delete any existing BookingMaterial whose (FROM, TO) scope
+            is not in the desired scope list, then for each desired scope
+            reuse an existing material (if present) or create a new one.
+            In either case, header + lines are rebuilt from the base block.
+    """
+    if not materials_payload:
+        return
+
+    per_auth = materials_payload.get("per_authority") or {}
+    base_block = per_auth.get(None)
+    if not base_block:
+        return
+
+    # Re-derive authorities from the booking (ignore loading_bas_unused).
+    all_bas = list(booking.booking_authorities or [])
+    loading_bas = [ba for ba in all_bas if (ba.role or "").upper() == "LOADING"]
+    unloading_bas = [ba for ba in all_bas if (ba.role or "").upper() == "UNLOADING"]
+
+    # Sort for deterministic ordering, but route order will dominate where possible.
+    loading_bas.sort(key=lambda ba: ba.sequence_index or 0)
+    unloading_bas.sort(key=lambda ba: ba.sequence_index or 0)
+
+    # Route ordering map: {location_id: index}
+    route_order = _compute_route_order_for_booking(booking)
+
+    def _ba_loc_index(ba: BookingAuthority) -> int:
+        auth = ba.authority
+        loc = getattr(auth, "location", None)
+        loc_id = getattr(loc, "id", None)
+        if loc_id is None:
+            # Push unknown locations to the end; keep stable via sequence_index.
+            return 10_000 + (ba.sequence_index or 0)
+        return route_order.get(loc_id, 10_000 + (ba.sequence_index or 0))
+
+    loading_sorted = sorted(loading_bas, key=_ba_loc_index)
+    unloading_sorted = sorted(unloading_bas, key=_ba_loc_index)
+
+    # Decide desired scopes (from_id, to_id)
+    desired_scopes: list[Tuple[Optional[int], Optional[int]]] = []
+
+    if not loading_sorted and not unloading_sorted:
+        # No authorities at all → pure booking-level material table.
+        desired_scopes.append((None, None))
+
+    elif loading_sorted and not unloading_sorted:
+        # Only LOADING authorities → FROM-only scoping.
+        for ba in loading_sorted:
+            desired_scopes.append((ba.id, None))
+
+    elif not loading_sorted and unloading_sorted:
+        # Only UNLOADING authorities → TO-only scoping.
+        for ba in unloading_sorted:
+            desired_scopes.append((None, ba.id))
+
+    else:
+        # Both LOADING and UNLOADING present → (FROM, TO) pairing,
+        # respecting route order (FROM before TO).
+        for from_ba in loading_sorted:
+            from_idx = _ba_loc_index(from_ba)
+            for to_ba in unloading_sorted:
+                to_idx = _ba_loc_index(to_ba)
+                if from_idx < to_idx:
+                    desired_scopes.append((from_ba.id, to_ba.id))
+
+        # Fallback: if route ordering made this empty (strange data),
+        # at least keep FROM-only tables so the booking is usable.
+        if not desired_scopes:
+            for ba in loading_sorted:
+                desired_scopes.append((ba.id, None))
+
+    # Deduplicate while preserving order
+    desired_scopes = list(dict.fromkeys(desired_scopes))
+
+    # Map existing materials by (from_id, to_id) scope
+    existing_by_scope: dict[Tuple[Optional[int], Optional[int]], BookingMaterial] = {}
+    materials = list(getattr(booking, "material_tables", []))
+    for m in materials:
+        key = (m.booking_authority_id, m.to_booking_authority_id)
+        existing_by_scope[key] = m
+
+    # On edit, remove any materials whose scope is no longer desired
+    if replace_existing:
+        for key, mat in list(existing_by_scope.items()):
+            if key not in desired_scopes:
+                db.session.delete(mat)
+                existing_by_scope.pop(key, None)
+
+    # Build / rebuild materials for desired scopes
+    seq_counter = 1
+    for from_id, to_id in desired_scopes:
+        key = (from_id, to_id)
+        material = existing_by_scope.get(key)
+
+        if material is None:
+            # New material table for this scope
+            material = BookingMaterial(
+                booking=booking,
+                booking_authority_id=from_id,
+                to_booking_authority_id=to_id,
+            )
+            db.session.add(material)
+            existing_by_scope[key] = material
+
+        _rebuild_material_from_block(material, base_block, sequence_index=seq_counter)
+        seq_counter += 1
+
+    # No commit here; caller is responsible for db.session.commit().
+
+
 def _create_booking_core(
     from_codes,
     dest_codes,
@@ -234,7 +495,7 @@ def _create_booking_core(
     placement_date: date,
     booking_date: date,
     lorry_id: int,
-    material_payload: dict | None,
+    materials_payload: dict | None,
     remarks_prefix: str | None = None,
 ):
     """
@@ -404,6 +665,7 @@ def _create_booking_core(
                 aid_int = int(aid)
             except (TypeError, ValueError):
                 continue
+
             ba = BookingAuthority(
                 booking_id=booking.id,
                 authority_id=aid_int,
@@ -421,6 +683,7 @@ def _create_booking_core(
                 aid_int = int(aid)
             except (TypeError, ValueError):
                 continue
+
             ba = BookingAuthority(
                 booking_id=booking.id,
                 authority_id=aid_int,
@@ -431,39 +694,14 @@ def _create_booking_core(
             unloading_seq += 1
 
     # -------------------------------
-    # MATERIALS: create ORM entities
+    # MATERIALS: create ORM entities (delegated)
     # -------------------------------
-    if material_payload:
-        material = BookingMaterial(
-            booking_id=booking.id,
-            mode=material_payload["mode"],
-            total_quantity=material_payload["total_quantity"],
-            total_quantity_unit=material_payload["total_quantity_unit"],
-            total_amount=material_payload["total_amount"],
-        )
-
-        # Attach lines
-        for idx, line_data in enumerate(material_payload["lines"], start=1):
-            line = BookingMaterialLine(
-                booking_material_id=material.id if material.id is not None else None,
-                sequence_index=idx,
-                description=line_data["description"],
-                unit=line_data["unit"],
-                quantity=line_data["quantity"],
-                rate=line_data["rate"],
-                amount=line_data["amount"],
-            )
-            material.lines.append(line)
-
-        # For ITEM mode, derive header total_amount from line amounts
-        if material.mode == "ITEM":
-            total_amt = sum(
-                (l.amount or 0.0) for l in material.lines if l.amount is not None
-            )
-            material.total_amount = total_amt if material.lines else None
-
-        booking.material_table = material
-        db.session.add(material)
+    _apply_materials_payload_to_booking(
+        booking,
+        loading_bas_unused=[],  # kept for signature compatibility
+        materials_payload=materials_payload,
+        replace_existing=False,
+    )
 
     db.session.commit()
     return booking
@@ -514,9 +752,9 @@ def add_booking():
         flash(" ".join(errors), "error")
         return _redirect_to_tab("#booking")
 
-    # MATERIALS via shared helper
-    material_payload = _parse_materials_from_request()
-    if material_payload is None:
+    # MATERIALS via shared helper (canonical structure)
+    materials_payload = _parse_materials_for_booking()
+    if materials_payload is None:
         return _redirect_to_tab("#booking")
 
     # booking_date for normal flow is "today"
@@ -529,7 +767,7 @@ def add_booking():
         placement_date=placement_date,
         booking_date=booking_date,
         lorry_id=lorry_id,
-        material_payload=material_payload,
+        materials_payload=materials_payload,
         remarks_prefix=None,
     )
 
@@ -553,8 +791,6 @@ def backdated_booking_view():
     all_locations = Location.query.order_by(Location.name).all()
 
     # Build authority lookup map: { "CODE": [ {id, title, address}, ... ] }
-    from transport.models import Authority   # import only if not already imported
-
     booking_auth_map = {}
     authorities = Authority.query.all()
 
@@ -656,9 +892,9 @@ def add_backdated_booking():
         flash(" ".join(errors), "error")
         return _redirect_to_tab("#booking")
 
-    # MATERIALS via shared helper
-    material_payload = _parse_materials_from_request()
-    if material_payload is None:
+    # MATERIALS via shared helper (canonical structure)
+    materials_payload = _parse_materials_for_booking()
+    if materials_payload is None:
         return _redirect_to_tab("#booking")
 
     remarks_prefix = f"[BACKDATED] {reason}"
@@ -670,7 +906,7 @@ def add_backdated_booking():
         placement_date=placement_date,
         booking_date=booking_date,
         lorry_id=lorry_id,
-        material_payload=material_payload,
+        materials_payload=materials_payload,
         remarks_prefix=remarks_prefix,
     )
 
@@ -681,21 +917,17 @@ def add_backdated_booking():
     return _redirect_to_tab("#booking")
 
 
-@admin_bp.route("/booking/<int:booking_id>/materials-json", methods=["GET"])
-def booking_materials_json(booking_id: int):
-    booking = Booking.query.get_or_404(booking_id)
-
-    material = getattr(booking, "material_table", None)
+def _serialize_material_table(material: BookingMaterial) -> dict:
+    """
+    Helper to serialize a single BookingMaterial (header + lines)
+    into a JSON-friendly structure.
+    """
     if material is None:
-        return jsonify(
-            {
-                "success": True,
-                "has_materials": False,
-                "mode": None,
-                "header": None,
-                "lines": [],
-            }
-        )
+        return {
+            "mode": None,
+            "header": None,
+            "lines": [],
+        }
 
     lines_payload = []
     for line in material.lines:
@@ -716,16 +948,249 @@ def booking_materials_json(booking_id: int):
         "total_amount": material.total_amount,
     }
 
+    return {
+        "mode": material.mode,
+        "header": header_payload,
+        "lines": lines_payload,
+    }
+
+
+@admin_bp.route("/booking/<int:booking_id>/materials-json", methods=["GET"])
+def booking_materials_json(booking_id: int):
+    """
+    Legacy / simple JSON for "the" material table on a booking,
+    using booking.material_table (first material) as a convenience.
+    """
+    booking = Booking.query.get_or_404(booking_id)
+
+    material = getattr(booking, "material_table", None)
+    if material is None:
+        return jsonify(
+            {
+                "success": True,
+                "has_materials": False,
+                "mode": None,
+                "header": None,
+                "lines": [],
+            }
+        )
+
+    serialized = _serialize_material_table(material)
+
     return jsonify(
         {
             "success": True,
             "has_materials": True,
-            "mode": material.mode,
-            "header": header_payload,
-            "lines": lines_payload,
+            "mode": serialized["mode"],
+            "header": serialized["header"],
+            "lines": serialized["lines"],
         }
     )
 
+
+@admin_bp.route("/booking/<int:booking_id>/materials-per-authority-json", methods=["GET"])
+@admin_bp.route("/booking/<int:booking_id>/materials-per-authority-json", methods=["GET"])
+def booking_materials_per_authority_json(booking_id: int):
+    """
+    Return materials grouped per BookingAuthority (LOADING / UNLOADING),
+    ready for future per-authority material editors and letter generation.
+
+    Structure:
+      {
+        "success": true,
+        "booking_id": <int>,
+        "booking_level": [ ... ],   # materials with no authorities (FROM=None, TO=None)
+        "loading": [ ... ],         # per loading BA (FROM = that BA, TO may be set)
+        "unloading": [ ... ],       # per unloading BA (TO = that BA, FROM may be set)
+        "from_to": [ ... ]          # matrix-style list of all scoped materials
+      }
+
+    Each entry in loading/unloading/booking_level looks like:
+      {
+        "booking_material_id": ...,
+        "booking_authority_id": ... or null,     # FROM BA id (for loading)
+        "to_booking_authority_id": ... or null,  # TO BA id
+        "sequence_index": ...,
+        "role": "LOADING" / "UNLOADING" / "BOOKING",
+        "authority": { ... } or null,            # FROM authority (for compat)
+        "from_authority": { ... } or null,
+        "to_authority": { ... } or null,
+        "mode": ...,
+        "header": { ... },
+        "lines": [ ... ]
+      }
+
+    Each entry in from_to looks like:
+      {
+        "booking_material_id": ...,
+        "sequence_index": ...,
+        "from_ba_id": ... or null,
+        "to_ba_id": ... or null,
+        "from_role": "LOADING"/"UNLOADING"/null,
+        "to_role": "LOADING"/"UNLOADING"/null,
+        "from_authority": { ... } or null,
+        "to_authority": { ... } or null,
+        "mode": ...,
+        "header": { ... },
+        "lines": [ ... ]
+      }
+    """
+    booking = Booking.query.get_or_404(booking_id)
+
+    materials = list(getattr(booking, "material_tables", []))
+
+    # Map materials by FROM-side booking_authority_id
+    mats_by_from_ba: dict[int | None, list[BookingMaterial]] = {}
+    for m in materials:
+        key = m.booking_authority_id  # FROM side (may be None)
+        mats_by_from_ba.setdefault(key, []).append(m)
+
+    def authority_payload(ba: BookingAuthority | None):
+        if ba is None:
+            return None
+        auth = ba.authority
+        loc = auth.location if auth else None
+        return {
+            "id": auth.id if auth else None,
+            "title": auth.authority_title if auth else None,
+            "address": auth.address if auth else None,
+            "location_code": loc.code if loc else None,
+            "location_name": loc.name if loc else None,
+        }
+
+    # -----------------------------
+    # Booking-level materials:
+    #   FROM=None and TO=None
+    # -----------------------------
+    booking_level = []
+    for m in mats_by_from_ba.get(None, []):
+        if m.to_booking_authority_id is not None:
+            # This is a TO-only or (None, TO) scope; handled later under 'unloading' / 'from_to'.
+            continue
+        payload = _serialize_material_table(m)
+        booking_level.append(
+            {
+                "booking_material_id": m.id,
+                "booking_authority_id": None,
+                "to_booking_authority_id": None,
+                "sequence_index": m.sequence_index,
+                "role": "BOOKING",
+                "authority": None,
+                "from_authority": None,
+                "to_authority": None,
+                "mode": payload["mode"],
+                "header": payload["header"],
+                "lines": payload["lines"],
+            }
+        )
+
+    loading = []
+    unloading = []
+
+    # -----------------------------
+    # Per-BA loading / unloading:
+    #   preserves your old structure
+    # -----------------------------
+    for ba in booking.booking_authorities:
+        role = (ba.role or "").upper()
+        mats_for_from_ba = mats_by_from_ba.get(ba.id, [])
+
+        # Materials where this BA is the FROM side
+        for m in mats_for_from_ba:
+            payload = _serialize_material_table(m)
+            from_auth = authority_payload(ba)
+            to_auth = authority_payload(m.to_booking_authority)
+
+            block = {
+                "booking_material_id": m.id,
+                "booking_authority_id": ba.id,
+                "to_booking_authority_id": m.to_booking_authority_id,
+                "sequence_index": m.sequence_index,
+                "role": role,
+                "authority": from_auth,      # backwards-compatible (FROM)
+                "from_authority": from_auth,
+                "to_authority": to_auth,
+                "mode": payload["mode"],
+                "header": payload["header"],
+                "lines": payload["lines"],
+            }
+
+            if role == "LOADING":
+                loading.append(block)
+            elif role == "UNLOADING":
+                # Rare case: FROM is an UNLOADING BA (if we ever allow that)
+                unloading.append(block)
+
+        # Additionally, handle TO-only materials (FROM=None, TO=this BA)
+        for m in materials:
+            if m.booking_authority_id is None and m.to_booking_authority_id == ba.id:
+                payload = _serialize_material_table(m)
+                from_auth = None
+                to_auth = authority_payload(ba)
+                block = {
+                    "booking_material_id": m.id,
+                    "booking_authority_id": None,
+                    "to_booking_authority_id": ba.id,
+                    "sequence_index": m.sequence_index,
+                    "role": "UNLOADING",
+                    "authority": to_auth,   # for compat, treat TO as 'authority' here
+                    "from_authority": from_auth,
+                    "to_authority": to_auth,
+                    "mode": payload["mode"],
+                    "header": payload["header"],
+                    "lines": payload["lines"],
+                }
+                unloading.append(block)
+
+    # -----------------------------
+    # Matrix-style from_to list
+    # -----------------------------
+    from_to = []
+
+    for m in materials:
+        # Skip pure booking-level entries (already in booking_level)
+        if m.booking_authority_id is None and m.to_booking_authority_id is None:
+            continue
+
+        from_ba = m.booking_authority
+        to_ba = m.to_booking_authority
+
+        payload = _serialize_material_table(m)
+        from_auth = authority_payload(from_ba)
+        to_auth = authority_payload(to_ba)
+
+        from_to.append(
+            {
+                "booking_material_id": m.id,
+                "sequence_index": m.sequence_index,
+                "from_ba_id": m.booking_authority_id,
+                "to_ba_id": m.to_booking_authority_id,
+                "from_role": (from_ba.role if from_ba and from_ba.role else None),
+                "to_role": (to_ba.role if to_ba and to_ba.role else None),
+                "from_authority": from_auth,
+                "to_authority": to_auth,
+                "mode": payload["mode"],
+                "header": payload["header"],
+                "lines": payload["lines"],
+            }
+        )
+
+    # Sort for deterministic order
+    loading.sort(key=lambda x: x["sequence_index"])
+    unloading.sort(key=lambda x: x["sequence_index"])
+    booking_level.sort(key=lambda x: x["sequence_index"])
+    from_to.sort(key=lambda x: x["sequence_index"])
+
+    return jsonify(
+        {
+            "success": True,
+            "booking_id": booking.id,
+            "booking_level": booking_level,
+            "loading": loading,
+            "unloading": unloading,
+            "from_to": from_to,
+        }
+    )
 
 @admin_bp.route("/booking/<int:booking_id>/cancel", methods=["POST"])
 def cancel_booking(booking_id):
@@ -843,7 +1308,7 @@ def booking_detail(booking_id):
             trip_serial = idx
             break
 
-    # Materials (read-only)
+    # Materials (read-only, legacy single-table convenience)
     material = getattr(booking, "material_table", None)
 
     return render_template(
@@ -855,9 +1320,186 @@ def booking_detail(booking_id):
     )
 
 
+def _parse_materials_from_edit_form(mode: str):
+    """
+    Parse and validate materials from the booking detail edit form.
+
+    Uses the 'line_*[]' field names from booking_detail.html and returns
+    a block with the same shape as _parse_materials_from_request():
+
+      {
+        "mode": mode,
+        "total_quantity": float|None,
+        "total_quantity_unit": str|None,
+        "total_amount": float|None,
+        "lines": [...]
+      }
+
+    On validation error: flashes messages and returns None.
+    """
+    if mode not in ("ITEM", "LUMPSUM"):
+        flash("Invalid material mode.", "error")
+        return None
+
+    def parse_float(form_name: str):
+        raw = request.form.get(form_name)
+        if raw is None:
+            return None
+        raw = raw.strip()
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            return None
+
+    # Header totals (same field names as creation)
+    header_qty = None
+    header_qty_unit = None
+    if mode == "LUMPSUM":
+        header_qty = parse_float("material_total_quantity")
+        total_unit_raw = (request.form.get("material_total_quantity_unit") or "").strip()
+        header_qty_unit = total_unit_raw or None
+    # In ITEM mode we do not persist a header quantity
+    header_amount = parse_float("material_total_amount")
+
+    # --- Rebuild lines from form data ---
+    desc_list = request.form.getlist("line_description[]")
+    unit_list = request.form.getlist("line_unit[]")
+    qty_list = request.form.getlist("line_quantity[]")
+    rate_list = request.form.getlist("line_rate[]")
+    amt_list = request.form.getlist("line_amount[]")
+
+    lines_data = []
+    has_line_qty = False      # track per-line quantity usage (for LUMPSUM invariant)
+    has_any_line = False      # track if we have at least one logical line
+
+    def list_float(values, idx):
+        if idx >= len(values):
+            return None
+        raw = (values[idx] or "").strip()
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            return None
+
+    for i, desc in enumerate(desc_list):
+        desc = (desc or "").strip()
+        if not desc:
+            # Entirely empty / no description → skip row
+            continue
+
+        unit_val = (unit_list[i] if i < len(unit_list) else "") or ""
+        unit_val = unit_val.strip() or None
+
+        qty_val = list_float(qty_list, i)
+        rate_val = list_float(rate_list, i)
+        amt_val = list_float(amt_list, i)
+
+        if qty_val is not None:
+            has_line_qty = True
+
+        if mode == "ITEM":
+            # In ITEM mode, derive amount from qty * rate when both are present
+            if qty_val is not None and rate_val is not None:
+                amt_val = qty_val * rate_val
+
+        lines_data.append(
+            {
+                "description": desc,
+                "unit": unit_val,
+                "quantity": qty_val,
+                "rate": rate_val,
+                "amount": amt_val,
+            }
+        )
+        has_any_line = True
+
+    # Enforce invariants per mode
+    if mode == "ITEM":
+        # At least one line required
+        if not has_any_line:
+            flash(
+                "In ITEM mode, enter at least one material line.",
+                "error",
+            )
+            return None
+
+        # Derive header total_amount from line amounts
+        total_amt = sum(
+            (ln["amount"] or 0.0) for ln in lines_data if ln["amount"] is not None
+        )
+        header_amount = total_amt if lines_data else None
+
+        header_qty = None
+        header_qty_unit = None
+
+    elif mode == "LUMPSUM":
+        has_header_values = bool(
+            header_qty is not None
+            or header_amount is not None
+            or header_qty_unit
+        )
+        has_lines = has_any_line
+
+        # Must have either header qty/amount OR at least one line
+        if not has_header_values and not has_lines:
+            flash(
+                "In LUMPSUM mode, enter a header quantity/amount or at least one material line.",
+                "error",
+            )
+            return None
+
+        # Hard Rule A: header total qty and per-line qty must not both be used
+        has_header_qty = header_qty is not None
+        if has_header_qty and has_line_qty:
+            flash(
+                "In LUMPSUM mode, use either the header total quantity or per-line quantities, not both.",
+                "error",
+            )
+            return None
+
+    return {
+        "mode": mode,
+        "total_quantity": header_qty,
+        "total_quantity_unit": header_qty_unit,
+        "total_amount": header_amount,
+        "lines": lines_data,
+    }
+
+
 @admin_bp.route("/booking/<int:booking_id>/materials-edit", methods=["POST"])
 def booking_materials_edit(booking_id: int):
-    """Create or update the material table for an existing booking."""
+    """
+    Create or update the material tables for an existing booking.
+
+    Semantics:
+
+      - The edit form represents a single "base" material definition.
+      - That definition is applied to all scopes according to the same rules
+        as creation (route-aware):
+
+            * if both LOADING and UNLOADING exist:
+                  one table per (LOADING, UNLOADING) pair
+                  where FROM location precedes TO location in the route
+                  (fallback to FROM-only if no valid pairs)
+
+            * elif only LOADING:
+                  one table per LOADING BA
+
+            * elif only UNLOADING:
+                  one table per UNLOADING BA
+
+            * else:
+                  single booking-level table
+
+      - Existing BookingMaterial rows whose (FROM, TO) scope is no longer
+        desired are deleted. For the remaining / desired scopes, we reuse
+        the existing BookingMaterial (if present) and overwrite its header
+        + lines from the edited base block.
+    """
     booking = Booking.query.get_or_404(booking_id)
 
     # Disallow edits on cancelled bookings
@@ -882,140 +1524,25 @@ def booking_materials_edit(booking_id: int):
         flash("Invalid material mode.", "error")
         return redirect(url_for("admin.booking_detail", booking_id=booking.id))
 
-    # Get or create BookingMaterial header (1:1 with Booking)
-    material = getattr(booking, "material_table", None)
-    if not material:
-        material = BookingMaterial(booking_id=booking.id)
-        db.session.add(material)
+    # Parse edit form into a block (same shape as creation parser)
+    block = _parse_materials_from_edit_form(mode)
+    if block is None:
+        # Validation errors already flashed
+        return redirect(url_for("admin.booking_detail", booking_id=booking.id))
 
-    material.mode = mode
+    materials_payload = {
+        "per_authority": {
+            None: block,
+        }
+    }
 
-    def parse_float(form_name: str):
-        raw = request.form.get(form_name)
-        if raw is None:
-            return None
-        raw = raw.strip()
-        if not raw:
-            return None
-        try:
-            return float(raw)
-        except ValueError:
-            return None
-
-    # Header totals
-    if mode == "LUMPSUM":
-        material.total_quantity = parse_float("material_total_quantity")
-        total_unit_raw = (request.form.get("material_total_quantity_unit") or "").strip()
-        material.total_quantity_unit = total_unit_raw or None
-    else:
-        # In ITEM mode we do not persist a header quantity
-        material.total_quantity = None
-        material.total_quantity_unit = None
-
-    material.total_amount = parse_float("material_total_amount")
-
-    # --- Rebuild lines from form data ---
-    desc_list = request.form.getlist("line_description[]")
-    unit_list = request.form.getlist("line_unit[]")
-    qty_list = request.form.getlist("line_quantity[]")
-    rate_list = request.form.getlist("line_rate[]")
-    amt_list = request.form.getlist("line_amount[]")
-
-    # Clear existing lines; relationship should be configured with delete-orphan
-    material.lines.clear()
-
-    has_line_qty = False      # track per-line quantity usage (for LUMPSUM invariant)
-    has_any_line = False      # track if we have at least one logical line
-
-    def list_float(values, idx):
-        if idx >= len(values):
-            return None
-        raw = (values[idx] or "").strip()
-        if not raw:
-            return None
-        try:
-            return float(raw)
-        except ValueError:
-            return None
-
-    seq = 1
-    for i, desc in enumerate(desc_list):
-        desc = (desc or "").strip()
-        if not desc:
-            # Entirely empty / no description → skip row
-            continue
-
-        unit_val = (unit_list[i] if i < len(unit_list) else "") or ""
-        unit_val = unit_val.strip() or None
-
-        qty_val = list_float(qty_list, i)
-        rate_val = list_float(rate_list, i)
-        amt_val = list_float(amt_list, i)
-
-        if qty_val is not None:
-            has_line_qty = True
-
-        if mode == "ITEM":
-            # In ITEM mode, derive amount from qty * rate when both are present
-            if qty_val is not None and rate_val is not None:
-                amt_val = qty_val * rate_val
-
-        line = BookingMaterialLine(
-            booking_material_id=material.id if material.id else None,
-            sequence_index=seq,
-            description=desc,
-            unit=unit_val,
-            quantity=qty_val,
-            rate=rate_val,
-            amount=amt_val,
-        )
-        material.lines.append(line)
-        has_any_line = True
-        seq += 1
-
-    # Enforce invariants per mode
-    if mode == "ITEM":
-        # At least one line required
-        if not has_any_line:
-            flash(
-                "In ITEM mode, enter at least one material line.",
-                "error",
-            )
-            db.session.rollback()
-            return redirect(url_for("admin.booking_detail", booking_id=booking.id))
-
-        # Derive header total_amount from line amounts
-        total_amt = sum(
-            (ln.amount or 0.0) for ln in material.lines if ln.amount is not None
-        )
-        material.total_amount = total_amt if material.lines else None
-
-    elif mode == "LUMPSUM":
-        has_header_values = bool(
-            material.total_quantity is not None
-            or material.total_amount is not None
-            or material.total_quantity_unit
-        )
-        has_lines = has_any_line
-
-        # Must have either header qty/amount OR at least one line
-        if not has_header_values and not has_lines:
-            flash(
-                "In LUMPSUM mode, enter a header quantity/amount or at least one material line.",
-                "error",
-            )
-            db.session.rollback()
-            return redirect(url_for("admin.booking_detail", booking_id=booking.id))
-
-        # Hard Rule A: header total qty and per-line qty must not both be used
-        has_header_qty = material.total_quantity is not None
-        if has_header_qty and has_line_qty:
-            flash(
-                "In LUMPSUM mode, use either the header total quantity or per-line quantities, not both.",
-                "error",
-            )
-            db.session.rollback()
-            return redirect(url_for("admin.booking_detail", booking_id=booking.id))
+    # Apply the block to all relevant material tables (update mode)
+    _apply_materials_payload_to_booking(
+        booking,
+        loading_bas_unused=[],
+        materials_payload=materials_payload,
+        replace_existing=True,
+    )
 
     db.session.commit()
     flash("Material list saved.", "success")

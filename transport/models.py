@@ -3,6 +3,7 @@ from datetime import datetime, date
 
 db = SQLAlchemy()
 
+
 class Company(db.Model):
     __tablename__ = "company"
 
@@ -14,6 +15,7 @@ class Company(db.Model):
 
     def __repr__(self) -> str:
         return f"<Company {self.id} {self.name}>"
+
 
 class Agreement(db.Model):
     __tablename__ = "agreement"
@@ -31,6 +33,7 @@ class Agreement(db.Model):
     def __repr__(self):
         return f"<Agreement {self.id} LOA={self.loa_number}>"
 
+
 class LorryDetails(db.Model):
     __tablename__ = "lorry_details"
 
@@ -42,6 +45,7 @@ class LorryDetails(db.Model):
 
     def __repr__(self):
         return f"<Lorry {self.id} {self.capacity}>"
+
 
 class Location(db.Model):
     __tablename__ = "location"
@@ -60,6 +64,7 @@ class Location(db.Model):
     def __repr__(self):
         return f"<Location {self.code} - {self.name}>"
 
+
 class Authority(db.Model):
     __tablename__ = "authority"
 
@@ -77,6 +82,7 @@ class Authority(db.Model):
 
     def __repr__(self):
         return f"<Authority {self.authority_title} @ {self.location.code}>"
+
 
 class Route(db.Model):
     __tablename__ = "route"
@@ -137,6 +143,7 @@ class RouteStop(db.Model):
             f"loc={self.location_id} start={self.is_start_cluster} end={self.is_end_cluster}>"
         )
 
+
 class AppConfig(db.Model):
     __tablename__ = "app_config"
 
@@ -158,6 +165,7 @@ class AppConfig(db.Model):
 
     def __repr__(self):
         return f"<AppConfig home_location={self.home_location_id} home_authority={self.home_authority_id}>"
+
 
 class Booking(db.Model):
     __tablename__ = "booking"
@@ -205,9 +213,26 @@ class Booking(db.Model):
     lorry = db.relationship("LorryDetails")
     route = db.relationship("Route")
 
+    # --- Materials: one booking → many material tables (typically one per loading point) ---
+    material_tables = db.relationship(
+        "BookingMaterial",
+        back_populates="booking",
+        cascade="all, delete-orphan",
+        order_by="BookingMaterial.id",
+    )
+
+    @property
+    def material_table(self):
+        """
+        Backwards-compatible alias for legacy code that still expects a single
+        material table per booking. Returns the first material table if any,
+        otherwise None.
+        """
+        return self.material_tables[0] if self.material_tables else None
+
     def __repr__(self):
         return f"<Booking id={self.id} route={self.route_id} km={self.trip_km}>"
-    
+
     def cancel(self, reason: str | None = None):
         self.status = "CANCELLED"
         self.cancelled_at = datetime.utcnow()
@@ -237,20 +262,63 @@ class BookingAuthority(db.Model):
     booking = db.relationship("Booking", backref="booking_authorities")
     authority = db.relationship("Authority")
 
-    def __repr__(self):
-        return f"<BookingAuthority booking={self.booking_id} authority={self.authority_id} role={self.role}>"
+    # materials where this BA is the FROM side
+    materials_from = db.relationship(
+        "BookingMaterial",
+        foreign_keys="BookingMaterial.booking_authority_id",
+        back_populates="booking_authority",
+        lazy="select",
+    )
 
+    # materials where this BA is the TO side
+    materials_to = db.relationship(
+        "BookingMaterial",
+        foreign_keys="BookingMaterial.to_booking_authority_id",
+        back_populates="to_booking_authority",
+        lazy="select",
+    )
+
+    @property
+    def material_table(self):
+        """
+        Backwards-compatible convenience:
+        for now we treat the *first* FROM-material as "the" table
+        for this authority, if code ever wants ba.material_table.
+        """
+        return self.materials_from[0] if self.materials_from else None
+
+    def __repr__(self):
+        return (
+            f"<BookingAuthority booking={self.booking_id} "
+            f"authority={self.authority_id} role={self.role}>"
+        )
 class BookingMaterial(db.Model):
     __tablename__ = "booking_material"
 
     id = db.Column(db.Integer, primary_key=True)
 
-    # One material table per booking (1:1)
+    # Many material tables per booking (typically one per loading point)
     booking_id = db.Column(
         db.Integer,
         db.ForeignKey("booking.id", ondelete="CASCADE"),
         nullable=False,
-        unique=True,         # enforce 1:1 at DB level
+        index=True,
+    )
+
+    # "FROM" side in this booking (usually a LOADING BookingAuthority)
+    booking_authority_id = db.Column(
+        db.Integer,
+        db.ForeignKey("booking_authority.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    # Optional "TO" side (for destination authority)
+    to_booking_authority_id = db.Column(
+        db.Integer,
+        db.ForeignKey("booking_authority.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
 
     # Modes:
@@ -261,13 +329,34 @@ class BookingMaterial(db.Model):
     # Header totals (only meaningful for LUMPSUM, automatically derived in ITEM)
     total_quantity = db.Column(db.Float)               # overall quantity if applicable
     total_quantity_unit = db.Column(db.String(50))     # "Ton", "MT", "Pkg", etc.
-    total_amount = db.Column(db.Float)                 # total amount for booking
+    total_amount = db.Column(db.Float)                 # total amount for this material table
 
-    # ORM relationships
+    # Ordering of material tables within a booking (follow loading sequence)
+    sequence_index = db.Column(db.Integer, nullable=False, default=1)
+
+    # --- ORM relationships ---
+
+    # Back to booking, as before
     booking = db.relationship(
         "Booking",
-        backref=db.backref("material_table", uselist=False),
-        lazy="joined"
+        back_populates="material_tables",
+        lazy="joined",
+    )
+
+    # FROM side: the loading point this material belongs to
+    booking_authority = db.relationship(
+        "BookingAuthority",
+        foreign_keys=[booking_authority_id],
+        back_populates="materials_from",
+        lazy="joined",
+    )
+
+    # TO side: optional destination point for this material
+    to_booking_authority = db.relationship(
+        "BookingAuthority",
+        foreign_keys=[to_booking_authority_id],
+        back_populates="materials_to",
+        lazy="joined",
     )
 
     lines = db.relationship(
@@ -275,11 +364,16 @@ class BookingMaterial(db.Model):
         backref="material_table",
         cascade="all, delete-orphan",
         order_by="BookingMaterialLine.sequence_index",
-        lazy="joined"
+        lazy="joined",
     )
 
     def __repr__(self):
-        return f"<BookingMaterial booking={self.booking_id} mode={self.mode}>"
+        return (
+            f"<BookingMaterial id={self.id} booking={self.booking_id} "
+            f"ba={self.booking_authority_id} to_ba={self.to_booking_authority_id} "
+            f"mode={self.mode}>"
+        )
+
 
 class BookingMaterialLine(db.Model):
     __tablename__ = "booking_material_line"
