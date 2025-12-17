@@ -1,5 +1,7 @@
 // static/js/booking.js
 
+document.documentElement.setAttribute("data-bookingjs-loaded", "1");
+
 if (window.__BOOKING_JS_INITED__) {
   // Already initialised; prevent double-binding if script is included twice.
 } else {
@@ -11,6 +13,14 @@ if (window.__BOOKING_JS_INITED__) {
     const BOOKING_AUTH_BY_CODE = window.BOOKING_AUTH_BY_CODE || {};
     const MATERIALS_URL_TEMPLATE =
       window.FLASK_BOOKING_MATERIALS_URL_TEMPLATE || null;
+
+    const acc = document.getElementById("materialsScopesAccordion");
+    if (acc) {
+      acc.insertAdjacentHTML(
+        "beforebegin",
+        '<div class="alert alert-warning py-1 small mb-2">booking.js: materials init reached ✅</div>'
+      );
+    }
 
     // ---------------------------------------
     // KM suggestions (Home Depot assistant)
@@ -888,407 +898,276 @@ if (window.__BOOKING_JS_INITED__) {
       });
     })();
 
-    // ========================================
-    // Materials section (Booking materials editor)
-    // ========================================
-    (function setupMaterialsSection() {
-      const modeSelect = document.getElementById("materialMode");
-      const tbody = document.getElementById("materialLinesBody");
-      const btnAddRow = document.getElementById("btnAddMaterialRow");
-      const totalQtyGroup = document.getElementById("materialTotalQtyGroup");
-      const totalQtyInput = document.querySelector(
-        "input[name='material_total_quantity']"
-      );
-      const totalUnitInput = document.querySelector(
-        "input[name='material_total_quantity_unit']"
-      );
-      const totalAmountInput = document.querySelector(
-        "input[name='material_total_amount']"
-      );
+  // ========================================
+  // Materials scopes (Hard Reset - Option A)
+  // ========================================
+  (function setupMaterialsScopesOptionA() {
+    const accordion = document.getElementById("materialsScopesAccordion");
+    const scopesJsonInput = document.getElementById("computedScopesJSON");
+    const errorEl = document.getElementById("materialsScopesError");
 
-      if (!modeSelect || !tbody || !btnAddRow) {
-        return; // not on this page
-      }
+    if (!accordion || !scopesJsonInput) return;
 
-      function renumberMaterialRows() {
-        const rows = tbody.querySelectorAll("tr");
-        rows.forEach(function (row, index) {
-          const slCell = row.querySelector("[data-role='material-sl']");
-          if (slCell) {
-            slCell.textContent = index + 1;
-          }
+    // ---- helpers ----
+    function q(sel, root) {
+      return (root || document).querySelector(sel);
+    }
+    function qa(sel, root) {
+      return Array.from((root || document).querySelectorAll(sel));
+    }
+    function esc(s) {
+      return String(s || "").replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    // Read selected authority IDs from the existing LI structure
+    function getSelectedAuthorities(side) {
+      const listId = side === "LOADING" ? "fromBookingLocationList" : "destBookingLocationList";
+      const list = document.getElementById(listId);
+      if (!list) return [];
+
+      const items = qa("li[data-code]", list);
+      const out = [];
+
+      items.forEach((li) => {
+        const code = (li.dataset.code || "").toUpperCase();
+        const container = q("[data-role='selected-authorities']", li);
+        const ids = container
+          ? qa("input[type='hidden']", container).map((h) => String(h.value))
+          : [];
+
+        ids.forEach((id) => {
+          out.push({ location_code: code, authority_id: id });
         });
-      }
+      });
 
-      function createMaterialRow() {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td class="text-center" data-role="material-sl"></td>
-          <td>
-            <input
-              type="text"
-              class="form-control form-control-sm"
-              name="material_line_description[]"
-              placeholder="Description"
-            >
-          </td>
-          <td data-role="material-item-only">
-            <input
-              type="text"
-              class="form-control form-control-sm material-unit"
-              name="material_line_unit[]"
-              placeholder="Unit"
-              data-role="item-only-input"
-            >
-          </td>
-          <td data-role="material-item-only">
-            <input
-              type="number"
-              class="form-control form-control-sm material-qty"
-              name="material_line_quantity[]"
-              placeholder="Qty"
-              step="0.01"
-              min="0"
-              data-role="item-only-input"
-            >
-          </td>
-          <td data-role="material-item-only">
-            <input
-              type="number"
-              class="form-control form-control-sm material-rate"
-              name="material_line_rate[]"
-              placeholder="Rate"
-              step="0.01"
-              min="0"
-              data-role="item-only-input"
-            >
-          </td>
-          <td data-role="material-item-only">
-            <input
-              type="number"
-              class="form-control form-control-sm material-amount"
-              name="material_line_amount[]"
-              placeholder="Amount"
-              step="0.01"
-              min="0"
-              data-role="item-only-input"
-            >
-          </td>
-          <td class="text-center">
-            <button type="button" class="btn btn-sm btn-outline-danger" data-role="material-remove-row">
-              &times;
+      return out;
+    }
+
+    // For now (Option A), backend does NOT use computed_scopes_json.
+    // But we still fill it with a helpful structure for the next phase.
+    function computeAuthorityPairScopes() {
+      const loading = getSelectedAuthorities("LOADING");
+      const unloading = getSelectedAuthorities("UNLOADING");
+
+      const scopes = [];
+      loading.forEach((l) => {
+        unloading.forEach((u) => {
+          scopes.push({
+            from: { location_code: l.location_code, authority_id: l.authority_id },
+            to: { location_code: u.location_code, authority_id: u.authority_id }
+          });
+        });
+      });
+
+      return scopes;
+    }
+
+    function setScopesJson() {
+      const scopes = computeAuthorityPairScopes();
+      scopesJsonInput.value = JSON.stringify({
+        mode: "AUTHORITY_PAIR",
+        scopes: scopes
+      });
+    }
+
+    // ---- UI: one base material table (legacy field names) ----
+    function renderBaseMaterialsAccordion() {
+      accordion.innerHTML = `
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="matBaseHead">
+            <button class="accordion-button" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#matBaseBody" aria-expanded="true" aria-controls="matBaseBody">
+              Base Materials (applied to all scopes)
             </button>
-          </td>
-        `;
-        return tr;
-      }
+          </h2>
+          <div id="matBaseBody" class="accordion-collapse collapse show" aria-labelledby="matBaseHead">
+            <div class="accordion-body">
 
-      function addMaterialRow() {
-        const row = createMaterialRow();
-        tbody.appendChild(row);
-        renumberMaterialRows();
-        applyMaterialModeVisibility();
-        updateLumpsumTotalQtyEnableState();
-      }
+              <div class="row g-2 align-items-end mb-3">
+                <div class="col-md-3">
+                  <label class="form-label form-label-sm mb-1">Mode</label>
+                  <select class="form-select form-select-sm" name="material_mode" id="material_mode_A" required>
+                    <option value="">-- Select --</option>
+                    <option value="ITEM">ITEM</option>
+                    <option value="LUMPSUM">LUMPSUM</option>
+                  </select>
+                </div>
 
-      function recalcHeaderTotals() {
-        const mode = modeSelect.value;
-        if (mode !== "ITEM") {
-          // In LUMPSUM or no mode, don't auto-override header totals
-          return;
-        }
+                <div class="col-md-3" id="materialTotalQtyGroup_A" style="display:none;">
+                  <label class="form-label form-label-sm mb-1">Total Quantity (LUMPSUM)</label>
+                  <input type="number" step="0.01" min="0" class="form-control form-control-sm"
+                        name="material_total_quantity" id="material_total_quantity_A">
+                </div>
 
-        // ITEM mode: sum amounts (and quantities) and push to header
-        let totalQty = 0;
-        let totalAmt = 0;
+                <div class="col-md-2" id="materialTotalQtyUnitGroup_A" style="display:none;">
+                  <label class="form-label form-label-sm mb-1">Unit</label>
+                  <input type="text" class="form-control form-control-sm"
+                        name="material_total_quantity_unit" id="material_total_quantity_unit_A">
+                </div>
 
-        tbody.querySelectorAll("tr").forEach(function (row) {
-          const qtyInput = row.querySelector(".material-qty");
-          const amtInput = row.querySelector(".material-amount");
+                <div class="col-md-4">
+                  <label class="form-label form-label-sm mb-1">Total Amount</label>
+                  <input type="number" step="0.01" min="0" class="form-control form-control-sm"
+                        name="material_total_amount" id="material_total_amount_A">
+                </div>
+              </div>
 
-          if (qtyInput) {
-            const q = parseFloat(qtyInput.value);
-            if (!isNaN(q)) {
-              totalQty += q;
-            }
-          }
-          if (amtInput) {
-            const a = parseFloat(amtInput.value);
-            if (!isNaN(a)) {
-              totalAmt += a;
-            }
-          }
-        });
+              <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle mb-2">
+                  <thead class="table-light">
+                    <tr>
+                      <th style="width:5%;">#</th>
+                      <th>Description</th>
+                      <th style="width:12%;" data-col="unit">Unit</th>
+                      <th style="width:12%;" data-col="qty">Qty</th>
+                      <th style="width:12%;" data-col="rate">Rate</th>
+                      <th style="width:12%;" data-col="amt">Amount</th>
+                      <th style="width:6%;"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="materialLinesBody_A"></tbody>
+                </table>
+              </div>
 
-        if (totalQtyInput) {
-          totalQtyInput.value = totalQty > 0 ? totalQty.toFixed(2) : "";
-        }
-        if (totalAmountInput) {
-          totalAmountInput.value = totalAmt > 0 ? totalAmt.toFixed(2) : "";
-        }
-        // Unit is left to user; we don't infer unit.
-      }
+              <div class="d-flex justify-content-between align-items-center">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="btnAddMaterialRow_A">
+                  + Add row
+                </button>
+                <button type="submit" class="btn btn-sm btn-primary">
+                  Save Booking
+                </button>
+              </div>
 
-      function updateLumpsumTotalQtyEnableState() {
-        const mode = modeSelect.value;
-        if (mode !== "LUMPSUM") {
-          // In ITEM or blank, we don't want user editing total qty/unit
-          if (totalQtyInput) {
-            totalQtyInput.disabled = true;
-          }
-          if (totalUnitInput) {
-            totalUnitInput.disabled = true;
-          }
-          return;
-        }
+              <div class="small text-muted mt-2">
+                Option A hard reset: This table posts legacy field names, so backend works unchanged.
+              </div>
 
-        let anyQtyFilled = false;
-        tbody.querySelectorAll(".material-qty").forEach(function (input) {
-          const v = parseFloat(input.value);
-          if (!isNaN(v) && v > 0) {
-            anyQtyFilled = true;
-          }
-        });
+            </div>
+          </div>
+        </div>
+      `;
+    }
 
-        if (totalQtyInput && totalUnitInput) {
-          if (anyQtyFilled) {
-            totalQtyInput.disabled = true;
-            totalUnitInput.disabled = true;
-          } else {
-            totalQtyInput.disabled = false;
-            totalUnitInput.disabled = false;
-          }
-        }
-      }
+    function renumberRows(tbody) {
+      qa("tr", tbody).forEach((tr, idx) => {
+        const cell = q("[data-role='sl']", tr);
+        if (cell) cell.textContent = String(idx + 1);
+      });
+    }
 
-      function applyMaterialModeVisibility() {
-        const mode = modeSelect.value;
+    function createRow() {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="text-center" data-role="sl"></td>
+        <td>
+          <input type="text" class="form-control form-control-sm"
+                name="material_line_description[]" placeholder="Description">
+        </td>
+        <td data-col="unit">
+          <input type="text" class="form-control form-control-sm"
+                name="material_line_unit[]" placeholder="Unit">
+        </td>
+        <td data-col="qty">
+          <input type="number" step="0.01" min="0" class="form-control form-control-sm"
+                name="material_line_quantity[]" placeholder="Qty">
+        </td>
+        <td data-col="rate">
+          <input type="number" step="0.01" min="0" class="form-control form-control-sm"
+                name="material_line_rate[]" placeholder="Rate">
+        </td>
+        <td data-col="amt">
+          <input type="number" step="0.01" min="0" class="form-control form-control-sm"
+                name="material_line_amount[]" placeholder="Amount">
+        </td>
+        <td class="text-center">
+          <button type="button" class="btn btn-sm btn-outline-danger" data-role="rm">×</button>
+        </td>
+      `;
+      return tr;
+    }
 
-        const unitInputs = tbody.querySelectorAll(".material-unit");
-        const qtyInputs = tbody.querySelectorAll(".material-qty");
-        const rateInputs = tbody.querySelectorAll(".material-rate");
-        const amountInputs = tbody.querySelectorAll(".material-amount");
+    function applyModeVisibility(mode, root) {
+      const showLumpsumHeader = mode === "LUMPSUM";
+      const qtyGroup = document.getElementById("materialTotalQtyGroup_A");
+      const unitGroup = document.getElementById("materialTotalQtyUnitGroup_A");
+      if (qtyGroup) qtyGroup.style.display = showLumpsumHeader ? "" : "none";
+      if (unitGroup) unitGroup.style.display = showLumpsumHeader ? "" : "none";
 
-        // td-level cells for rate/amount/unit/qty
-        const rateCells = [];
-        const amountCells = [];
-        const unitCells = [];
-        const qtyCells = [];
+      // Table columns
+      const showRateAmt = mode === "ITEM";
+      const showQtyUnit = mode === "ITEM" || mode === "LUMPSUM";
 
-        rateInputs.forEach(function (inp) {
-          if (inp.closest("td")) rateCells.push(inp.closest("td"));
-        });
-        amountInputs.forEach(function (inp) {
-          if (inp.closest("td")) amountCells.push(inp.closest("td"));
-        });
-        unitInputs.forEach(function (inp) {
-          if (inp.closest("td")) unitCells.push(inp.closest("td"));
-        });
-        qtyInputs.forEach(function (inp) {
-          if (inp.closest("td")) qtyCells.push(inp.closest("td"));
-        });
+      qa("[data-col='unit']", root).forEach((el) => el.style.display = showQtyUnit ? "" : "none");
+      qa("[data-col='qty']", root).forEach((el) => el.style.display = showQtyUnit ? "" : "none");
+      qa("[data-col='rate']", root).forEach((el) => el.style.display = showRateAmt ? "" : "none");
+      qa("[data-col='amt']", root).forEach((el) => el.style.display = showRateAmt ? "" : "none");
+    }
 
-        if (mode === "ITEM") {
-          // Show all item columns
-          unitCells.forEach(function (td) {
-            td.classList.remove("d-none");
-          });
-          qtyCells.forEach(function (td) {
-            td.classList.remove("d-none");
-          });
-          rateCells.forEach(function (td) {
-            td.classList.remove("d-none");
-          });
-          amountCells.forEach(function (td) {
-            td.classList.remove("d-none");
-          });
+    function wireBaseMaterials() {
+      const modeSel = document.getElementById("material_mode_A");
+      const tbody = document.getElementById("materialLinesBody_A");
+      const addBtn = document.getElementById("btnAddMaterialRow_A");
 
-          // Enable all item inputs
-          unitInputs.forEach((i) => i.removeAttribute("disabled"));
-          qtyInputs.forEach((i) => i.removeAttribute("disabled"));
-          rateInputs.forEach((i) => i.removeAttribute("disabled"));
-          amountInputs.forEach((i) => i.removeAttribute("disabled"));
+      if (!modeSel || !tbody || !addBtn) return;
 
-          // Hide total quantity group in ITEM mode
-          if (totalQtyGroup) {
-            totalQtyGroup.classList.add("d-none");
-          }
-          // Header totals in ITEM mode are computed only, not editable
-          if (totalQtyInput) {
-            totalQtyInput.disabled = true;
-            totalQtyInput.value = "";
-          }
-          if (totalUnitInput) {
-            totalUnitInput.disabled = true;
-            // we don't forcibly clear unit; user may have set it meaningfully
-          }
-          if (totalAmountInput) {
-            totalAmountInput.disabled = true;
-          }
-        } else if (mode === "LUMPSUM") {
-          // LUMPSUM mode:
-          // - Show Unit + Qty columns
-          // - Hide Rate + Amount columns
-          unitCells.forEach(function (td) {
-            td.classList.remove("d-none");
-          });
-          qtyCells.forEach(function (td) {
-            td.classList.remove("d-none");
-          });
-          rateCells.forEach(function (td) {
-            td.classList.add("d-none");
-          });
-          amountCells.forEach(function (td) {
-            td.classList.add("d-none");
-          });
+      // start with one row
+      tbody.appendChild(createRow());
+      renumberRows(tbody);
+      applyModeVisibility("", accordion);
 
-          // Enable Unit + Qty; disable Rate + Amount
-          unitInputs.forEach((i) => i.removeAttribute("disabled"));
-          qtyInputs.forEach((i) => i.removeAttribute("disabled"));
-          rateInputs.forEach((i) => {
-            i.value = "";
-            i.setAttribute("disabled", "disabled");
-          });
-          amountInputs.forEach((i) => {
-            i.value = "";
-            i.setAttribute("disabled", "disabled");
-          });
+      addBtn.addEventListener("click", () => {
+        tbody.appendChild(createRow());
+        renumberRows(tbody);
+        applyModeVisibility(modeSel.value, accordion);
+        setScopesJson();
+      });
 
-          // Show total quantity group (with conditional enable)
-          if (totalQtyGroup) {
-            totalQtyGroup.classList.remove("d-none");
-          }
-          if (totalAmountInput) {
-            totalAmountInput.disabled = false;
-          }
-          updateLumpsumTotalQtyEnableState();
-        } else {
-          // No mode / blank:
-          // Hide all item columns and disable all item inputs
-          unitCells.forEach(function (td) {
-            td.classList.add("d-none");
-          });
-          qtyCells.forEach(function (td) {
-            td.classList.add("d-none");
-          });
-          rateCells.forEach(function (td) {
-            td.classList.add("d-none");
-          });
-          amountCells.forEach(function (td) {
-            td.classList.add("d-none");
-          });
+      tbody.addEventListener("click", (e) => {
+        const rm = e.target.closest("[data-role='rm']");
+        if (!rm) return;
+        const tr = rm.closest("tr");
+        if (tr) tr.remove();
+        if (!tbody.querySelector("tr")) tbody.appendChild(createRow());
+        renumberRows(tbody);
+        setScopesJson();
+      });
 
-          unitInputs.forEach((i) => {
-            i.setAttribute("disabled", "disabled");
-          });
-          qtyInputs.forEach((i) => {
-            i.setAttribute("disabled", "disabled");
-          });
-          rateInputs.forEach((i) => {
-            i.setAttribute("disabled", "disabled");
-          });
-          amountInputs.forEach((i) => {
-            i.setAttribute("disabled", "disabled");
-          });
+      modeSel.addEventListener("change", () => {
+        applyModeVisibility(modeSel.value, accordion);
+        setScopesJson();
+      });
 
-          if (totalQtyGroup) {
-            totalQtyGroup.classList.add("d-none");
-          }
-          if (totalQtyInput) {
-            totalQtyInput.disabled = true;
-            totalQtyInput.value = "";
-          }
-          if (totalUnitInput) {
-            totalUnitInput.disabled = true;
-            totalUnitInput.value = "";
-          }
-          if (totalAmountInput) {
-            totalAmountInput.disabled = true;
-            totalAmountInput.value = "";
-          }
-        }
-      }
-
-      function handleMaterialTableEvents(e) {
-        const target = e.target;
-        const mode = modeSelect.value;
-
-        if (target.matches("[data-role='material-remove-row']")) {
-          const row = target.closest("tr");
-          if (row) {
-            row.remove();
-            if (tbody.children.length === 0) {
-              addMaterialRow();
-            } else {
-              renumberMaterialRows();
-            }
-            recalcHeaderTotals();
-            updateLumpsumTotalQtyEnableState();
-          }
-          return;
-        }
-
-        // ITEM mode: auto amount + totals
+      // Keep scopes JSON updated whenever authorities may have changed
+      document.addEventListener("click", (e) => {
         if (
-          mode === "ITEM" &&
-          (target.classList.contains("material-qty") ||
-            target.classList.contains("material-rate"))
+          e.target.matches("#applyAuthoritySelection") ||
+          e.target.closest("button[data-role='from-booking-add']") ||
+          e.target.closest("button[data-role='dest-booking-add']") ||
+          e.target.closest("button.btn-link.text-danger")
         ) {
-          const row = target.closest("tr");
-          if (!row) return;
-
-          const qtyInput = row.querySelector(".material-qty");
-          const rateInput = row.querySelector(".material-rate");
-          const amtInput = row.querySelector(".material-amount");
-
-          if (!qtyInput || !rateInput || !amtInput) return;
-
-          const qty = parseFloat(qtyInput.value);
-          const rate = parseFloat(rateInput.value);
-
-          if (!isNaN(qty) && !isNaN(rate)) {
-            const amt = qty * rate;
-            amtInput.value = amt > 0 ? amt.toFixed(2) : "";
-          } else if (!qty && !rate) {
-            amtInput.value = "";
-          }
-          recalcHeaderTotals();
-          return;
+          setTimeout(setScopesJson, 50);
         }
-
-        if (mode === "ITEM" && target.classList.contains("material-amount")) {
-          recalcHeaderTotals();
-          return;
-        }
-
-        // LUMPSUM: respond to quantity changes by enabling/disabling total qty/unit
-        if (mode === "LUMPSUM" && target.classList.contains("material-qty")) {
-          updateLumpsumTotalQtyEnableState();
-        }
-      }
-
-      // Wire up
-      btnAddRow.addEventListener("click", function () {
-        addMaterialRow();
       });
 
-      tbody.addEventListener("click", handleMaterialTableEvents);
-      tbody.addEventListener("input", handleMaterialTableEvents);
-
-      modeSelect.addEventListener("change", function () {
-        applyMaterialModeVisibility();
-        recalcHeaderTotals();
-      });
-
-      // Initial state on page load
-      if (tbody.children.length === 0) {
-        addMaterialRow();
-      } else {
-        renumberMaterialRows();
-        applyMaterialModeVisibility();
-        updateLumpsumTotalQtyEnableState();
+      // On submit: ensure JSON is present (even if empty)
+      const form = accordion.closest("form");
+      if (form) {
+        form.addEventListener("submit", () => {
+          setScopesJson();
+          if (errorEl) errorEl.classList.add("d-none");
+        });
       }
-    })();
+
+      // initial set
+      setScopesJson();
+    }
+
+    renderBaseMaterialsAccordion();
+    wireBaseMaterials();
+  })();
+
 
     // ========================================
     // Booking detail page: materials editor

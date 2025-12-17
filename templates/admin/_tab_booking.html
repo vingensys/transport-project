@@ -1,9 +1,15 @@
 <div class="container-fluid">
 
   <h4 class="mb-3">Bookings</h4>
+  <!-- MARKER: TAB_BOOKING_MULTISCOPE_V2 -->
 
   <!-- Booking builder -->
-  <form method="POST" action="{{ url_for('admin.add_booking') }}">
+  <form
+    id="bookingBuilderForm"
+    data-role="booking-builder-form"
+    method="POST"
+    action="{{ url_for('admin.add_booking') }}"
+  >
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
     <div class="card mb-4 border-2 border-primary-subtle">
@@ -215,113 +221,37 @@
           </div>
         </div>
 
-        <!-- Materials editor -->
+        <!-- Multi-scope Materials -->
         <hr class="my-3">
 
-        <div class="border rounded p-3">
-          <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-3">
-            <div class="mb-2 mb-md-0">
-              <h5 class="mb-1">Materials</h5>
-              <small class="text-muted">
-                Every booking must include a material list. Use
-                <strong>Item-wise</strong> for Qty × Rate lines or
-                <strong>Lumpsum</strong> for summary entries.
-              </small>
-            </div>
-            <div class="ms-md-3" style="min-width: 220px;">
-              <label for="materialMode" class="form-label form-label-sm mb-1">Mode</label>
-              <select
-                class="form-select form-select-sm"
-                id="materialMode"
-                name="material_mode"
-              >
-                <option value="">-- No materials --</option>
-                <option value="ITEM">Item-wise</option>
-                <option value="LUMPSUM">Lumpsum</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- Lines table -->
-          <div class="table-responsive mb-3">
-            <table class="table table-sm table-bordered align-middle mb-0">
-              <thead class="table-light">
-                <tr class="text-center">
-                  <th style="width: 40px;">Sl.</th>
-                  <th>Description</th>
-                  <th style="width: 90px;">Unit</th>
-                  <th style="width: 90px;">Qty</th>
-                  <!-- widened -->
-                  <th style="width: 140px;">Rate</th>
-                  <th style="width: 170px;">Amount</th>
-                  <th style="width: 40px;"></th>
-                </tr>
-              </thead>
-              <tbody id="materialLinesBody">
-                <!-- JS will create rows -->
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Totals + Add Row + Save at the bottom -->
-          <div class="row g-3 align-items-end">
-            <div class="col-md-5 d-none" id="materialTotalQtyGroup">
-              <div class="row g-2">
-                <div class="col-6">
-                  <label class="form-label form-label-sm mb-1">Total Qty</label>
-                  <input
-                    type="number"
-                    class="form-control form-control-sm"
-                    name="material_total_quantity"
-                    step="0.01"
-                    min="0"
-                    placeholder="e.g. 25.5"
-                  >
-                </div>
-                <div class="col-6">
-                  <label class="form-label form-label-sm mb-1">Unit</label>
-                  <input
-                    type="text"
-                    class="form-control form-control-sm"
-                    name="material_total_quantity_unit"
-                    maxlength="20"
-                    placeholder="e.g. MT"
-                  >
-                </div>
-              </div>
-            </div>
-
-            <div class="col-md-3">
-              <label class="form-label form-label-sm mb-1">Total Amount</label>
-              <input
-                type="number"
-                class="form-control form-control-sm"
-                name="material_total_amount"
-                step="0.01"
-                min="0"
-                placeholder="Auto / lumpsum"
-              >
-            </div>
-
-            <div class="col-md-4 text-md-end">
-              <button
-                type="button"
-                class="btn btn-sm btn-outline-secondary me-2"
-                id="btnAddMaterialRow"
-              >
-                Add Row
-              </button>
-
-              <!-- New position for Save Booking -->
-              <button
-                type="submit"
-                class="btn btn-primary btn-sm"
-              >
-                Save Booking
-              </button>
-            </div>
-          </div>
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h5 class="mb-0">Materials (Per Route Scope)</h5>
+          <small class="text-muted">Each FROM → TO authority pair must have one material table.</small>
         </div>
+
+        <!-- The accordion holding all scope material tables -->
+        <div
+          class="accordion mt-3"
+          id="materialsScopesAccordion"
+          data-role="materials-scopes-accordion"
+        ></div>
+
+        <!-- Validation error placeholder (if JS wants to show inline warnings) -->
+        <div
+          id="materialsScopesError"
+          class="text-danger small mt-2 d-none"
+          data-role="materials-scopes-error"
+        >    
+          Missing material tables for some route scopes.
+        </div>
+
+        <!-- Hidden field to store the computed scope list -->
+        <input
+          type="hidden"
+          name="computed_scopes_json"
+          id="computedScopesJSON"
+          data-role="computed-scopes-json"
+        >
 
       </div>
     </div>

@@ -29,26 +29,27 @@ def _normalize_codes(codes):
     """Strip and uppercase location codes, dropping blanks."""
     return [c.strip().upper() for c in codes if c and c.strip()]
 
-
 def _parse_materials_from_request():
     """
     Parse and validate materials from request.form (booking creation forms).
 
-    Returns a dict:
-      {
-        "mode": "ITEM" or "LUMPSUM",
-        "total_quantity": float|None,
-        "total_quantity_unit": str|None,
-        "total_amount": float|None,
-        "lines": [
-          {"description": str, "unit": str|None,
-           "quantity": float|None, "rate": float|None,
-           "amount": float|None},
-          ...
-        ]
-      }
-
-    On validation error: flashes messages and returns None.
+    Modes:
+      - ITEM:
+          * At least one line required
+          * Each line: qty+rate together (or both blank)
+          * Amount auto-computed when qty+rate present
+          * User must not type amount alone
+          * At least one computed amount must exist (not just descriptions)
+          * Header total_amount is derived as sum(line.amount)
+      - LUMPSUM:
+          * Must have header (qty/amount/unit) OR at least one line
+          * If header total_qty is given, line quantities must not be used
+          * Lines can have partial numbers (desc mandatory if row exists)
+      - ATTACHED:
+          * Must have ONLY header total_amount (required)
+          * No header qty/unit
+          * No qty/rate/amount in lines
+          * Stores a single placeholder line: "As per list attached."
     """
     material_payload = None
     material_number_error = False
@@ -61,6 +62,37 @@ def _parse_materials_from_request():
 
     header_qty = None
     header_amount = None
+
+    # -------------------------------
+    # ATTACHED: ignore UI noise early
+    # -------------------------------
+    if material_mode_raw == "ATTACHED":
+        header_amount_str = (request.form.get("material_total_amount") or "").strip()
+        if not header_amount_str:
+            flash("In ATTACHED mode, Total Amount is required.", "error")
+            return None
+        try:
+            header_amount = float(header_amount_str)
+        except ValueError:
+            flash("Invalid number in Total Amount for ATTACHED mode.", "error")
+            return None
+
+        return {
+            "mode": "ATTACHED",
+            "total_quantity": None,
+            "total_quantity_unit": None,
+            "total_amount": header_amount,
+            "lines": [
+                {
+                    "description": "As per list attached.",
+                    "unit": None,
+                    "quantity": None,
+                    "rate": None,
+                    "amount": None,
+                }
+            ],
+        }
+
 
     # Parse header numbers (lenient: if blank → None)
     if header_qty_str:
@@ -95,12 +127,13 @@ def _parse_materials_from_request():
         else 0
     )
 
+    # --- Parse rows ---
     for idx in range(max_len):
-        desc = line_descs[idx] if idx < len(line_descs) else ""
-        unit = line_units[idx].strip() if idx < len(line_units) else ""
-        qty_str = line_qty_strs[idx].strip() if idx < len(line_qty_strs) else ""
-        rate_str = line_rate_strs[idx].strip() if idx < len(line_rate_strs) else ""
-        amount_str = line_amount_strs[idx].strip() if idx < len(line_amount_strs) else ""
+        desc = (line_descs[idx] if idx < len(line_descs) else "").strip()
+        unit = (line_units[idx] if idx < len(line_units) else "").strip()
+        qty_str = (line_qty_strs[idx] if idx < len(line_qty_strs) else "").strip()
+        rate_str = (line_rate_strs[idx] if idx < len(line_rate_strs) else "").strip()
+        amount_str = (line_amount_strs[idx] if idx < len(line_amount_strs) else "").strip()
 
         # Entirely empty row → skip
         if not (desc or unit or qty_str or rate_str or amount_str):
@@ -136,6 +169,43 @@ def _parse_materials_from_request():
             except ValueError:
                 material_number_error = True
 
+        # If any number parsing failed, stop after loop with a single message
+        if material_number_error:
+            continue
+
+        # --- Mode-specific compute/validation at line level ---
+        if material_mode_raw == "ITEM":
+            # In ITEM mode: qty+rate must come together (or both blank)
+            if (qty is None) ^ (rate is None):
+                flash(
+                    "In ITEM mode, each material row must have BOTH Quantity and Rate (or leave both blank).",
+                    "error",
+                )
+                return None
+
+            # Amount must not be manually entered without qty+rate
+            if qty is None and rate is None and amount is not None:
+                flash(
+                    "In ITEM mode, do not enter Amount unless Quantity and Rate are provided (Amount is auto-calculated).",
+                    "error",
+                )
+                return None
+
+            # Compute amount when qty+rate present
+            if qty is not None and rate is not None:
+                amount = qty * rate
+
+        elif material_mode_raw == "ATTACHED":
+            # ATTACHED: lines must not carry qty/rate/amount; description will be normalized later
+            if qty is not None or rate is not None or amount is not None:
+                flash(
+                    "In ATTACHED mode, do not enter Quantity/Rate/Amount in lines. Use only the header Total Amount.",
+                    "error",
+                )
+                return None
+
+        # LUMPSUM: allow partial fields (desc mandatory), header-vs-line qty invariant checked later.
+
         lines_data.append(
             {
                 "description": desc,
@@ -163,27 +233,31 @@ def _parse_materials_from_request():
     if not material_mode_raw:
         flash(
             "Each booking must include a material list. "
-            "Choose ITEM or LUMPSUM and enter at least one material.",
+            "Choose ITEM, LUMPSUM, or ATTACHED and enter the required fields.",
             "error",
         )
         return None
 
     # 2) Mode must be valid
-    if material_mode_raw not in ("ITEM", "LUMPSUM"):
-        flash("Material mode must be either ITEM or LUMPSUM.", "error")
+    if material_mode_raw not in ("ITEM", "LUMPSUM", "ATTACHED"):
+        flash("Material mode must be ITEM, LUMPSUM, or ATTACHED.", "error")
         return None
 
     # 3) Per-mode minimum content
     if material_mode_raw == "ITEM":
-        # ITEM mode requires at least one line
         if not has_lines:
+            flash("In ITEM mode, enter at least one material line.", "error")
+            return None
+
+        # IMPORTANT: In ITEM mode, ensure at least one computed amount exists
+        if not any(line.get("amount") is not None for line in lines_data):
             flash(
-                "In ITEM mode, enter at least one material line.",
+                "In ITEM mode, at least one row must include Quantity and Rate so Amount can be computed.",
                 "error",
             )
             return None
+
     elif material_mode_raw == "LUMPSUM":
-        # LUMPSUM mode requires either header qty/amount OR at least one line
         if not has_header_values and not has_lines:
             flash(
                 "In LUMPSUM mode, enter a header quantity/amount or at least one material line.",
@@ -191,8 +265,7 @@ def _parse_materials_from_request():
             )
             return None
 
-    # LUMPSUM-specific validation: header total quantity vs per-line quantities
-    if material_mode_raw == "LUMPSUM" and (has_header_values or has_lines):
+        # LUMPSUM-specific validation: header total quantity vs per-line quantities
         has_header_qty = header_qty is not None
         has_line_qty = any(line["quantity"] is not None for line in lines_data)
         if has_header_qty and has_line_qty:
@@ -202,31 +275,76 @@ def _parse_materials_from_request():
             )
             return None
 
-    # Build payload according to mode
-    if material_mode_raw and (has_header_values or has_lines):
-        if material_mode_raw == "ITEM":
-            # ITEM mode: header quantity/unit ignored, total_amount from line amounts
-            total_amt = sum(
-                (line["amount"] or 0.0)
-                for line in lines_data
-                if line["amount"] is not None
+    elif material_mode_raw == "ATTACHED":
+        # Must have header total amount
+        if header_amount is None:
+            flash("In ATTACHED mode, Total Amount is required.", "error")
+            return None
+
+        # No header qty/unit allowed
+        if header_qty is not None or header_qty_unit:
+            flash(
+                "In ATTACHED mode, do not enter Total Quantity or Unit. Use only Total Amount.",
+                "error",
             )
-            header_qty = None
-            header_qty_unit = ""
-            header_amount = total_amt if lines_data else None
+            return None
+
+        # Lines are not required; if user added description rows, ignore them.
+        # We will normalize into a single placeholder line below.
+
+    # Build payload according to mode
+    if material_mode_raw == "ITEM":
+        total_amt = sum(
+            (line["amount"] or 0.0)
+            for line in lines_data
+            if line["amount"] is not None
+        )
+        header_qty = None
+        header_qty_unit = ""
+        header_amount = total_amt if lines_data else None
 
         material_payload = {
-            "mode": material_mode_raw,
+            "mode": "ITEM",
+            "total_quantity": None,
+            "total_quantity_unit": None,
+            "total_amount": header_amount,
+            "lines": lines_data,
+        }
+        return material_payload
+
+    if material_mode_raw == "LUMPSUM":
+        if not (has_header_values or has_lines):
+            return None
+
+        material_payload = {
+            "mode": "LUMPSUM",
             "total_quantity": header_qty,
             "total_quantity_unit": header_qty_unit or None,
             "total_amount": header_amount,
             "lines": lines_data,
         }
-    else:
-        material_payload = None
+        return material_payload
 
-    return material_payload
+    if material_mode_raw == "ATTACHED":
+        # Canonicalize: only header total_amount + one placeholder line
+        material_payload = {
+            "mode": "ATTACHED",
+            "total_quantity": None,
+            "total_quantity_unit": None,
+            "total_amount": header_amount,
+            "lines": [
+                {
+                    "description": "As per list attached.",
+                    "unit": None,
+                    "quantity": None,
+                    "rate": None,
+                    "amount": None,
+                }
+            ],
+        }
+        return material_payload
 
+    return None
 
 def _parse_materials_for_booking():
     """
@@ -1319,27 +1437,46 @@ def booking_detail(booking_id):
         trip_serial=trip_serial,
     )
 
-
 def _parse_materials_from_edit_form(mode: str):
     """
     Parse and validate materials from the booking detail edit form.
 
-    Uses the 'line_*[]' field names from booking_detail.html and returns
-    a block with the same shape as _parse_materials_from_request():
+    Supports modes: ITEM, LUMPSUM, ATTACHED.
 
-      {
-        "mode": mode,
-        "total_quantity": float|None,
-        "total_quantity_unit": str|None,
-        "total_amount": float|None,
-        "lines": [...]
-      }
-
-    On validation error: flashes messages and returns None.
+    ATTACHED rules (edit):
+      - Total Amount required
+      - No header quantity/unit
+      - No qty/rate/amount in lines
+      - Store a single placeholder line: "As per list attached."
     """
-    if mode not in ("ITEM", "LUMPSUM"):
+    if mode not in ("ITEM", "LUMPSUM", "ATTACHED"):
         flash("Invalid material mode.", "error")
         return None
+
+    # -------------------------------
+    # ATTACHED: ignore UI noise early
+    # -------------------------------
+    if mode == "ATTACHED":
+        header_amount = parse_float("material_total_amount")
+        if header_amount is None:
+            flash("In ATTACHED mode, Total Amount is required.", "error")
+            return None
+
+        return {
+            "mode": "ATTACHED",
+            "total_quantity": None,
+            "total_quantity_unit": None,
+            "total_amount": header_amount,
+            "lines": [
+                {
+                    "description": "As per list attached.",
+                    "unit": None,
+                    "quantity": None,
+                    "rate": None,
+                    "amount": None,
+                }
+            ],
+        }
 
     def parse_float(form_name: str):
         raw = request.form.get(form_name)
@@ -1353,26 +1490,31 @@ def _parse_materials_from_edit_form(mode: str):
         except ValueError:
             return None
 
-    # Header totals (same field names as creation)
+    # Header totals
     header_qty = None
     header_qty_unit = None
     if mode == "LUMPSUM":
         header_qty = parse_float("material_total_quantity")
         total_unit_raw = (request.form.get("material_total_quantity_unit") or "").strip()
         header_qty_unit = total_unit_raw or None
-    # In ITEM mode we do not persist a header quantity
+    elif mode == "ATTACHED":
+        # In ATTACHED mode, header qty/unit must not be used
+        total_unit_raw = (request.form.get("material_total_quantity_unit") or "").strip()
+        if total_unit_raw:
+            flash("In ATTACHED mode, do not enter Total Quantity Unit.", "error")
+            return None
+        if parse_float("material_total_quantity") is not None:
+            flash("In ATTACHED mode, do not enter Total Quantity.", "error")
+            return None
+
     header_amount = parse_float("material_total_amount")
 
-    # --- Rebuild lines from form data ---
+    # Lines from form
     desc_list = request.form.getlist("line_description[]")
     unit_list = request.form.getlist("line_unit[]")
     qty_list = request.form.getlist("line_quantity[]")
     rate_list = request.form.getlist("line_rate[]")
     amt_list = request.form.getlist("line_amount[]")
-
-    lines_data = []
-    has_line_qty = False      # track per-line quantity usage (for LUMPSUM invariant)
-    has_any_line = False      # track if we have at least one logical line
 
     def list_float(values, idx):
         if idx >= len(values):
@@ -1385,10 +1527,13 @@ def _parse_materials_from_edit_form(mode: str):
         except ValueError:
             return None
 
+    lines_data = []
+    has_line_qty = False
+    has_any_line = False
+
     for i, desc in enumerate(desc_list):
         desc = (desc or "").strip()
         if not desc:
-            # Entirely empty / no description → skip row
             continue
 
         unit_val = (unit_list[i] if i < len(unit_list) else "") or ""
@@ -1402,9 +1547,35 @@ def _parse_materials_from_edit_form(mode: str):
             has_line_qty = True
 
         if mode == "ITEM":
-            # In ITEM mode, derive amount from qty * rate when both are present
+            # ITEM: qty+rate must come together
+            if (qty_val is None) ^ (rate_val is None):
+                flash(
+                    "In ITEM mode, each material row must have BOTH Quantity and Rate (or leave both blank).",
+                    "error",
+                )
+                return None
+
+            # Disallow manual amount without qty+rate
+            if qty_val is None and rate_val is None and amt_val is not None:
+                flash(
+                    "In ITEM mode, do not enter Amount unless Quantity and Rate are provided (Amount is auto-calculated).",
+                    "error",
+                )
+                return None
+
+            # Compute amount
             if qty_val is not None and rate_val is not None:
                 amt_val = qty_val * rate_val
+
+        elif mode == "ATTACHED":
+            # Lines must not carry numbers
+            if qty_val is not None or rate_val is not None or amt_val is not None:
+                flash(
+                    "In ATTACHED mode, do not enter Quantity/Rate/Amount in lines. Use only Total Amount.",
+                    "error",
+                )
+                return None
+            # We will ignore user-provided line descriptions anyway (normalize later).
 
         lines_data.append(
             {
@@ -1417,34 +1588,28 @@ def _parse_materials_from_edit_form(mode: str):
         )
         has_any_line = True
 
-    # Enforce invariants per mode
+    # Mode invariants
     if mode == "ITEM":
-        # At least one line required
         if not has_any_line:
+            flash("In ITEM mode, enter at least one material line.", "error")
+            return None
+
+        if not any(ln.get("amount") is not None for ln in lines_data):
             flash(
-                "In ITEM mode, enter at least one material line.",
+                "In ITEM mode, at least one row must include Quantity and Rate so Amount can be computed.",
                 "error",
             )
             return None
 
-        # Derive header total_amount from line amounts
-        total_amt = sum(
-            (ln["amount"] or 0.0) for ln in lines_data if ln["amount"] is not None
-        )
+        total_amt = sum((ln["amount"] or 0.0) for ln in lines_data if ln["amount"] is not None)
         header_amount = total_amt if lines_data else None
-
         header_qty = None
         header_qty_unit = None
 
     elif mode == "LUMPSUM":
-        has_header_values = bool(
-            header_qty is not None
-            or header_amount is not None
-            or header_qty_unit
-        )
+        has_header_values = bool(header_qty is not None or header_amount is not None or header_qty_unit)
         has_lines = has_any_line
 
-        # Must have either header qty/amount OR at least one line
         if not has_header_values and not has_lines:
             flash(
                 "In LUMPSUM mode, enter a header quantity/amount or at least one material line.",
@@ -1452,7 +1617,6 @@ def _parse_materials_from_edit_form(mode: str):
             )
             return None
 
-        # Hard Rule A: header total qty and per-line qty must not both be used
         has_header_qty = header_qty is not None
         if has_header_qty and has_line_qty:
             flash(
@@ -1461,6 +1625,24 @@ def _parse_materials_from_edit_form(mode: str):
             )
             return None
 
+    elif mode == "ATTACHED":
+        if header_amount is None:
+            flash("In ATTACHED mode, Total Amount is required.", "error")
+            return None
+
+        # Normalize to a single placeholder line
+        lines_data = [
+            {
+                "description": "As per list attached.",
+                "unit": None,
+                "quantity": None,
+                "rate": None,
+                "amount": None,
+            }
+        ]
+        header_qty = None
+        header_qty_unit = None
+
     return {
         "mode": mode,
         "total_quantity": header_qty,
@@ -1468,7 +1650,6 @@ def _parse_materials_from_edit_form(mode: str):
         "total_amount": header_amount,
         "lines": lines_data,
     }
-
 
 @admin_bp.route("/booking/<int:booking_id>/materials-edit", methods=["POST"])
 def booking_materials_edit(booking_id: int):
@@ -1515,12 +1696,12 @@ def booking_materials_edit(booking_id: int):
     if not mode:
         flash(
             "Each booking must include a material list. "
-            "Choose ITEM or LUMPSUM and enter at least one material.",
+            "Choose ITEM, LUMPSUM, or ATTACHED and enter the required fields",
             "error",
         )
         return redirect(url_for("admin.booking_detail", booking_id=booking.id))
 
-    if mode not in ("ITEM", "LUMPSUM"):
+    if mode not in ("ITEM", "LUMPSUM", "ATTACHED"):
         flash("Invalid material mode.", "error")
         return redirect(url_for("admin.booking_detail", booking_id=booking.id))
 
