@@ -217,41 +217,72 @@
           </div>
 
           <div class="col-md-3 mb-3 text-end">
-              <!-- (Intentionally left blank: Save Booking moved to Materials section) -->    
+            <!-- (Save button is in Materials section) -->
           </div>
         </div>
 
-        <!-- Multi-scope Materials -->
         <hr class="my-3">
 
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <h5 class="mb-0">Materials (Per Route Scope)</h5>
-          <small class="text-muted">Each FROM → TO authority pair must have one material table.</small>
+        <!-- Materials (Multi-scope) -->
+        <div class="border rounded p-3">
+          <div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-2">
+            <div>
+              <h5 class="mb-1">Materials</h5>
+              <div class="small text-muted">
+                Each scope below corresponds to a FROM → TO authority pair.
+              </div>
+            </div>
+          </div>
+
+          <!-- Scopes accordion (JS builds one section per scope) -->
+          <div
+            class="accordion"
+            id="materialsScopesAccordion"
+            data-role="materials-scopes-accordion"
+          ></div>
+
+          <!-- Empty state hint (JS may toggle visibility) -->
+          <div class="text-muted small mt-2" id="materialsScopesEmptyHint">
+            Select authorities on FROM and DESTINATION to generate scope material tables.
+          </div>
+
+          <div
+            id="materialsScopesError"
+            class="text-danger small mt-2 d-none"
+            data-role="materials-scopes-error"
+          >
+            Please complete all scope material tables.
+          </div>
+
+          <input
+            type="hidden"
+            name="materials_scopes_json"
+            id="materialsScopesJSON"
+            data-role="materials-scopes-json"
+          >
+          <!-- Hidden BACKEND BASE MATERIAL TABLE (legacy field names only) -->
+          <div class="d-none" id="backendBaseMaterialsContainer" aria-hidden="true">
+            <select name="material_mode" id="backend_material_mode" required>
+              <option value=""></option>
+              <option value="ITEM"></option>
+              <option value="LUMPSUM"></option>
+              <option value="ATTACHED"></option>
+            </select>
+
+            <input type="text" name="material_total_quantity" id="backend_material_total_quantity">
+            <input type="text" name="material_total_quantity_unit" id="backend_material_total_quantity_unit">
+            <input type="text" name="material_total_amount" id="backend_material_total_amount">
+
+            <div id="backendLinesHost"></div>
+          </div>
         </div>
-
-        <!-- The accordion holding all scope material tables -->
-        <div
-          class="accordion mt-3"
-          id="materialsScopesAccordion"
-          data-role="materials-scopes-accordion"
-        ></div>
-
-        <!-- Validation error placeholder (if JS wants to show inline warnings) -->
-        <div
-          id="materialsScopesError"
-          class="text-danger small mt-2 d-none"
-          data-role="materials-scopes-error"
-        >    
-          Missing material tables for some route scopes.
+        <!-- /Materials -->
+        
+        <div class="d-flex justify-content-end mt-3">
+          <button type="submit" id="btnSaveBooking" class="btn btn-primary">
+            Save Booking
+          </button>
         </div>
-
-        <!-- Hidden field to store the computed scope list -->
-        <input
-          type="hidden"
-          name="computed_scopes_json"
-          id="computedScopesJSON"
-          data-role="computed-scopes-json"
-        >
 
       </div>
     </div>
@@ -471,5 +502,5 @@
   window.BOOKING_AUTH_BY_CODE = {{ booking_auth_map|tojson }};
   window.FLASK_QUICK_ADD_AUTHORITY_URL = "{{ url_for('admin.quick_add_authority') }}";
   window.FLASK_BOOKING_MATERIALS_URL_TEMPLATE =
-    "{{ url_for('admin.booking_materials_json', booking_id=0) | replace('0', '__ID__') }}";
+  "{{ url_for('admin.booking_materials_per_authority_json', booking_id=0) | replace('0', '__ID__') }}";
 </script>

@@ -1,6 +1,7 @@
 from flask import request, redirect, url_for, flash, jsonify, render_template
 from datetime import date, datetime
 from typing import Optional, Tuple
+import json
 
 from transport.models import (
     db,
@@ -28,6 +29,7 @@ def _redirect_to_tab(tab_hash: str):
 def _normalize_codes(codes):
     """Strip and uppercase location codes, dropping blanks."""
     return [c.strip().upper() for c in codes if c and c.strip()]
+
 
 def _parse_materials_from_request():
     """
@@ -92,7 +94,6 @@ def _parse_materials_from_request():
                 }
             ],
         }
-
 
     # Parse header numbers (lenient: if blank → None)
     if header_qty_str:
@@ -289,9 +290,6 @@ def _parse_materials_from_request():
             )
             return None
 
-        # Lines are not required; if user added description rows, ignore them.
-        # We will normalize into a single placeholder line below.
-
     # Build payload according to mode
     if material_mode_raw == "ITEM":
         total_amt = sum(
@@ -299,8 +297,6 @@ def _parse_materials_from_request():
             for line in lines_data
             if line["amount"] is not None
         )
-        header_qty = None
-        header_qty_unit = ""
         header_amount = total_amt if lines_data else None
 
         material_payload = {
@@ -346,31 +342,321 @@ def _parse_materials_from_request():
 
     return None
 
-def _parse_materials_for_booking():
+
+def _parse_material_block_from_json(block: dict, scope_label: str):
     """
-    Wrapper that converts the single-table material payload
-    into a canonical structure.
+    Parse + validate a single material block coming from JSON.
 
-    For now we still have a single "base" material definition which
-    will be applied to all scopes ((FROM, TO) pairs, or FROM-only, etc).
-
-    Returns:
+    Returns normalized block:
       {
-        "per_authority": {
-            None: <single material_payload dict>
-        }
+        "mode": "ITEM"/"LUMPSUM"/"ATTACHED",
+        "total_quantity": float|None,
+        "total_quantity_unit": str|None,
+        "total_amount": float|None,
+        "lines": [ {description, unit, quantity, rate, amount}, ... ]
+      }
+    """
+    if not isinstance(block, dict):
+        flash(f"Invalid material block in {scope_label}.", "error")
+        return None
+
+    mode = (block.get("mode") or "").strip().upper()
+    if mode not in ("ITEM", "LUMPSUM", "ATTACHED"):
+        flash(f"Invalid material mode in {scope_label}.", "error")
+        return None
+
+    def _to_float(v):
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return None
+            try:
+                return float(s)
+            except ValueError:
+                return None
+        return None
+
+    # ---- headers ----
+    header_qty_raw = block.get("total_quantity")
+    header_amt_raw = block.get("total_amount")
+
+    header_qty = _to_float(header_qty_raw)
+    header_qty_unit = (block.get("total_quantity_unit") or "").strip() or None
+    header_amount = _to_float(header_amt_raw)
+
+    # number validation (catch non-empty numeric strings that failed)
+    def _is_bad_num(raw):
+        return isinstance(raw, str) and raw.strip() and _to_float(raw) is None
+
+    if _is_bad_num(header_qty_raw) or _is_bad_num(header_amt_raw):
+        flash(
+            f"Invalid number in materials header ({scope_label}). Please check quantity/amount.",
+            "error",
+        )
+        return None
+
+    # ---- lines ----
+    lines_in = block.get("lines") or []
+    if not isinstance(lines_in, list):
+        flash(f"Invalid lines list in {scope_label}.", "error")
+        return None
+
+    lines_data = []
+    for idx, ln in enumerate(lines_in, start=1):
+        if ln is None:
+            continue
+        if not isinstance(ln, dict):
+            flash(f"Invalid line #{idx} in {scope_label}.", "error")
+            return None
+
+        desc = (ln.get("description") or "").strip()
+        unit = (ln.get("unit") or "").strip() or None
+
+        qty_raw = ln.get("quantity")
+        rate_raw = ln.get("rate")
+        amt_raw = ln.get("amount")
+
+        qty = _to_float(qty_raw)
+        rate = _to_float(rate_raw)
+        amount = _to_float(amt_raw)
+
+        # bad numbers in line
+        if _is_bad_num(qty_raw) or _is_bad_num(rate_raw) or _is_bad_num(amt_raw):
+            flash(
+                f"Invalid number in materials lines ({scope_label}). Please check qty/rate/amount.",
+                "error",
+            )
+            return None
+
+        # Entirely empty row → skip
+        if not (desc or unit or qty is not None or rate is not None or amount is not None):
+            continue
+
+        # Description is mandatory for any non-empty row
+        if not desc:
+            flash(
+                f"Each material row must have a description if any other field is filled ({scope_label}).",
+                "error",
+            )
+            return None
+
+        # Mode-specific line rules
+        if mode == "ITEM":
+            if (qty is None) ^ (rate is None):
+                flash(
+                    f"In ITEM mode, each material row must have BOTH Quantity and Rate (or leave both blank) ({scope_label}).",
+                    "error",
+                )
+                return None
+
+            if qty is None and rate is None and amount is not None:
+                flash(
+                    f"In ITEM mode, do not enter Amount unless Quantity and Rate are provided (Amount is auto-calculated) ({scope_label}).",
+                    "error",
+                )
+                return None
+
+            if qty is not None and rate is not None:
+                amount = qty * rate
+
+        elif mode == "ATTACHED":
+            if qty is not None or rate is not None or amount is not None:
+                flash(
+                    f"In ATTACHED mode, do not enter Quantity/Rate/Amount in lines. Use only the header Total Amount ({scope_label}).",
+                    "error",
+                )
+                return None
+
+        # LUMPSUM: allow partial numbers; invariant checked later.
+
+        lines_data.append(
+            {
+                "description": desc,
+                "unit": unit,
+                "quantity": qty,
+                "rate": rate,
+                "amount": amount,
+            }
+        )
+
+    # -------------------------------------------------
+    # Per-mode block-level validations (tightened)
+    # -------------------------------------------------
+    has_lines = bool(lines_data)
+
+    if mode == "ITEM":
+        if not has_lines:
+            flash(f"In ITEM mode, enter at least one material line ({scope_label}).", "error")
+            return None
+
+        if not any(line.get("amount") is not None for line in lines_data):
+            flash(
+                f"In ITEM mode, at least one row must include Quantity and Rate so Amount can be computed ({scope_label}).",
+                "error",
+            )
+            return None
+
+        # Derive header total_amount from lines
+        total_amt = sum((ln["amount"] or 0.0) for ln in lines_data if ln["amount"] is not None)
+        header_amount = total_amt if lines_data else None
+
+        # ITEM never uses header qty/unit
+        header_qty = None
+        header_qty_unit = None
+
+    elif mode == "LUMPSUM":
+        # Tight rule:
+        # - must provide a quantity basis either in header OR at least one line qty
+        # - amount-only is not sufficient
+        has_header_qty = header_qty is not None and header_qty != 0
+        has_line_qty = any((ln.get("quantity") is not None and ln.get("quantity") != 0) for ln in lines_data)
+
+        if not has_header_qty and not has_line_qty:
+            flash(
+                f"In LUMPSUM mode, provide quantity either in the header Total Quantity or in at least one line Quantity ({scope_label}).",
+                "error",
+            )
+            return None
+
+        # Invariant: header qty and line qty cannot both be used
+        if has_header_qty and has_line_qty:
+            flash(
+                f"In LUMPSUM mode, use either the header total quantity or per-line quantities, not both ({scope_label}).",
+                "error",
+            )
+            return None
+
+        # If header qty is used, unit is strongly recommended (optional but you can enforce if you want)
+        # if has_header_qty and not header_qty_unit:
+        #     flash(f"In LUMPSUM mode, Unit is required when header Total Quantity is used ({scope_label}).", "error")
+        #     return None
+
+    elif mode == "ATTACHED":
+        if header_amount is None:
+            flash(f"In ATTACHED mode, Total Amount is required ({scope_label}).", "error")
+            return None
+
+        if header_qty is not None or header_qty_unit:
+            flash(
+                f"In ATTACHED mode, do not enter Total Quantity or Unit. Use only Total Amount ({scope_label}).",
+                "error",
+            )
+            return None
+
+        # Canonicalize to one placeholder line
+        lines_data = [
+            {
+                "description": "As per list attached.",
+                "unit": None,
+                "quantity": None,
+                "rate": None,
+                "amount": None,
+            }
+        ]
+        header_qty = None
+        header_qty_unit = None
+
+    return {
+        "mode": mode,
+        "total_quantity": header_qty,
+        "total_quantity_unit": header_qty_unit,
+        "total_amount": header_amount,
+        "lines": lines_data,
+    }
+
+def _parse_material_scopes_from_json(raw_json: str):
+    """
+    Parse + validate multiscope JSON posted by UI.
+
+    Expected JSON:
+      {
+        "mode": "AUTHORITY_PAIR",
+        "scopes": [
+          {
+            "from": {"authority_id": <int>},
+            "to": {"authority_id": <int>},
+            "material": { ...material block... }
+          },
+          ...
+        ]
       }
 
-    On validation error: returns None.
+    Returns:
+      {"mode":"AUTHORITY_PAIR","scopes":[...normalized...]}
     """
+    try:
+        data = json.loads(raw_json)
+    except Exception:
+        flash("Invalid materials scopes JSON.", "error")
+        return None
+
+    mode = (data.get("mode") or "").strip().upper()
+    if mode != "AUTHORITY_PAIR":
+        flash("Invalid materials scopes mode.", "error")
+        return None
+
+    scopes = data.get("scopes")
+    if not isinstance(scopes, list) or not scopes:
+        flash("Materials: at least one scope is required.", "error")
+        return None
+
+    normalized_scopes = []
+    for i, s in enumerate(scopes, start=1):
+        if not isinstance(s, dict):
+            flash(f"Invalid scope entry at #{i}.", "error")
+            return None
+
+        frm = s.get("from") or {}
+        to = s.get("to") or {}
+        block = s.get("material") or {}
+
+        try:
+            from_auth_id = int(frm.get("authority_id"))
+            to_auth_id = int(to.get("authority_id"))
+        except Exception:
+            flash(f"Invalid authority id in scope #{i}.", "error")
+            return None
+
+        parsed_block = _parse_material_block_from_json(block, scope_label=f"scope #{i}")
+        if parsed_block is None:
+            return None  # flash already done
+
+        normalized_scopes.append(
+            {
+                "from": {"authority_id": from_auth_id},
+                "to": {"authority_id": to_auth_id},
+                "material": parsed_block,
+            }
+        )
+
+    return {"mode": "AUTHORITY_PAIR", "scopes": normalized_scopes}
+
+
+def _parse_materials_for_booking():
+    """
+    Light orchestrator.
+
+    Supports two inputs:
+      A) Legacy single/base materials from normal form fields -> uses _parse_materials_from_request()
+      B) Multiscope JSON (authority-pair) posted by UI -> uses _parse_material_scopes_from_json()
+
+    Returns a canonical payload dict or None (with flash on error).
+    """
+    raw_json = (request.form.get("materials_scopes_json") or "").strip()
+    if raw_json:
+        return _parse_material_scopes_from_json(raw_json)
+
     material_payload = _parse_materials_from_request()
     if material_payload is None:
         return None
 
     return {
-        "per_authority": {
-            None: material_payload,
-        }
+        "mode": "BASE_BLOCK",
+        "per_authority": {None: material_payload},
     }
 
 
@@ -406,7 +692,6 @@ def _rebuild_material_from_block(
 
         desc = (line_block.get("description") or "").strip()
         if not desc:
-            # Only description is strictly required; skip truly empty rows.
             continue
 
         line = BookingMaterialLine(
@@ -424,8 +709,6 @@ def _rebuild_material_from_block(
             try:
                 total_amount_from_lines += float(line.amount)
             except (TypeError, ValueError):
-                # Already validated earlier; if something weird sneaks in,
-                # just ignore it here.
                 pass
 
     # For ITEM mode, header total_amount is always derived from lines.
@@ -443,12 +726,9 @@ def _compute_route_order_for_booking(booking: Booking) -> dict:
         return {}
 
     order: dict[int, int] = {}
-    # Relationship name is `stops` on Route
     for rs in route.stops:
-        # sequence_index is guaranteed non-null in the model, but be defensive
         order[rs.location_id] = rs.sequence_index or 0
     return order
-
 
 
 def _apply_materials_payload_to_booking(
@@ -456,70 +736,125 @@ def _apply_materials_payload_to_booking(
     loading_bas_unused: list[BookingAuthority],
     materials_payload: dict | None,
     replace_existing: bool = False,
-):
+) -> bool:
     """
-    Given a Booking with its BookingAuthority rows already created,
-    apply the materials_payload to create or update BookingMaterial and lines.
+    Apply materials payload to create/update BookingMaterial tables.
 
-    GENERALIZED SCOPE SEMANTICS:
-
-      Scope of a single BookingMaterial is:
-          (FROM BookingAuthority, TO BookingAuthority)
-
-      where either side may be NULL, giving four cases:
-
-        (FROM, TO)         full pair (most detailed)
-        (FROM, None)       FROM-only scope
-        (None, TO)         TO-only scope
-        (None, None)       booking-level (no authorities)
-
-    SCOPE SELECTION:
-
-      - If both LOADING and UNLOADING exist:
-            create one scope per (LOADING, UNLOADING) pair
-            where the FROM location appears before the TO location
-            along the booking route. If no such pairs exist (odd data),
-            fall back to FROM-only scopes.
-
-      - If only LOADING:
-            one scope per LOADING BA (FROM-only)
-
-      - If only UNLOADING:
-            one scope per UNLOADING BA (TO-only)
-
-      - If neither:
-            single booking-level scope (None, None)
-
-    EDIT vs CREATION:
-
-      - replace_existing=False (creation):
-            build materials for desired scopes. Reuse existing ones
-            if any (usually none during first creation), otherwise create.
-
-      - replace_existing=True (edit):
-            delete any existing BookingMaterial whose (FROM, TO) scope
-            is not in the desired scope list, then for each desired scope
-            reuse an existing material (if present) or create a new one.
-            In either case, header + lines are rebuilt from the base block.
+    Returns:
+      True  -> applied successfully
+      False -> rejected (flash already shown)
     """
     if not materials_payload:
-        return
+        return True
 
+    payload_mode = (materials_payload.get("mode") or "BASE_BLOCK").upper()
+
+    # ---------------------------------------------------------
+    # Multiscope: explicit authority-pair scopes from UI JSON
+    # ---------------------------------------------------------
+    if payload_mode == "AUTHORITY_PAIR":
+        scopes_in = materials_payload.get("scopes") or []
+        if not scopes_in:
+            flash("Materials scopes JSON is empty.", "error")
+            return False
+
+        # Map Authority.id -> BookingAuthority for this booking
+        all_bas = list(booking.booking_authorities or [])
+        ba_by_authority_id: dict[int, BookingAuthority] = {}
+        for ba in all_bas:
+            if ba.authority_id is not None:
+                ba_by_authority_id[int(ba.authority_id)] = ba
+
+        if not ba_by_authority_id:
+            flash("This booking has no authorities; cannot apply scoped materials.", "error")
+            return False
+
+        desired_scopes: list[Tuple[Optional[int], Optional[int]]] = []
+        block_by_scope: dict[Tuple[Optional[int], Optional[int]], dict] = {}
+
+        invalid_scopes: list[str] = []
+
+        for i, s in enumerate(scopes_in, start=1):
+            frm = (s.get("from") or {})
+            to = (s.get("to") or {})
+            block = (s.get("material") or {})
+
+            try:
+                from_auth_id = int(frm.get("authority_id"))
+                to_auth_id = int(to.get("authority_id"))
+            except Exception:
+                invalid_scopes.append(f"scope #{i}: invalid authority_id value(s)")
+                continue
+
+            from_ba = ba_by_authority_id.get(from_auth_id)
+            to_ba = ba_by_authority_id.get(to_auth_id)
+
+            # Tightening: reject any mismatch instead of silently skipping
+            if not from_ba or not to_ba:
+                invalid_scopes.append(
+                    f"scope #{i}: authority pair ({from_auth_id} → {to_auth_id}) not present in this booking"
+                )
+                continue
+
+            key = (from_ba.id, to_ba.id)
+            desired_scopes.append(key)
+            block_by_scope[key] = block
+
+        if invalid_scopes:
+            # Show a concise but actionable error
+            msg = "Materials scopes JSON contains invalid/mismatched scopes: " + "; ".join(invalid_scopes)
+            flash(msg, "error")
+            return False
+
+        desired_scopes = list(dict.fromkeys(desired_scopes))
+        if not desired_scopes:
+            flash("No valid material scopes found to apply.", "error")
+            return False
+
+        existing_by_scope: dict[Tuple[Optional[int], Optional[int]], BookingMaterial] = {}
+        for m in list(getattr(booking, "material_tables", [])):
+            existing_by_scope[(m.booking_authority_id, m.to_booking_authority_id)] = m
+
+        if replace_existing:
+            for key, mat in list(existing_by_scope.items()):
+                if key not in desired_scopes:
+                    db.session.delete(mat)
+                    existing_by_scope.pop(key, None)
+
+        seq_counter = 1
+        for key in desired_scopes:
+            from_id, to_id = key
+            material = existing_by_scope.get(key)
+            if material is None:
+                material = BookingMaterial(
+                    booking=booking,
+                    booking_authority_id=from_id,
+                    to_booking_authority_id=to_id,
+                )
+                db.session.add(material)
+                existing_by_scope[key] = material
+
+            _rebuild_material_from_block(material, block_by_scope[key], sequence_index=seq_counter)
+            seq_counter += 1
+
+        return True
+
+    # ---------------------------------------------------------
+    # Base-block legacy path
+    # ---------------------------------------------------------
     per_auth = materials_payload.get("per_authority") or {}
     base_block = per_auth.get(None)
     if not base_block:
-        return
+        flash("Missing base material block.", "error")
+        return False
 
-    # Re-derive authorities from the booking (ignore loading_bas_unused).
     all_bas = list(booking.booking_authorities or [])
     loading_bas = [ba for ba in all_bas if (ba.role or "").upper() == "LOADING"]
     unloading_bas = [ba for ba in all_bas if (ba.role or "").upper() == "UNLOADING"]
 
-    # Sort for deterministic ordering, but route order will dominate where possible.
     loading_bas.sort(key=lambda ba: ba.sequence_index or 0)
     unloading_bas.sort(key=lambda ba: ba.sequence_index or 0)
 
-    # Route ordering map: {location_id: index}
     route_order = _compute_route_order_for_booking(booking)
 
     def _ba_loc_index(ba: BookingAuthority) -> int:
@@ -527,33 +862,23 @@ def _apply_materials_payload_to_booking(
         loc = getattr(auth, "location", None)
         loc_id = getattr(loc, "id", None)
         if loc_id is None:
-            # Push unknown locations to the end; keep stable via sequence_index.
             return 10_000 + (ba.sequence_index or 0)
         return route_order.get(loc_id, 10_000 + (ba.sequence_index or 0))
 
     loading_sorted = sorted(loading_bas, key=_ba_loc_index)
     unloading_sorted = sorted(unloading_bas, key=_ba_loc_index)
 
-    # Decide desired scopes (from_id, to_id)
     desired_scopes: list[Tuple[Optional[int], Optional[int]]] = []
 
     if not loading_sorted and not unloading_sorted:
-        # No authorities at all → pure booking-level material table.
         desired_scopes.append((None, None))
-
     elif loading_sorted and not unloading_sorted:
-        # Only LOADING authorities → FROM-only scoping.
         for ba in loading_sorted:
             desired_scopes.append((ba.id, None))
-
     elif not loading_sorted and unloading_sorted:
-        # Only UNLOADING authorities → TO-only scoping.
         for ba in unloading_sorted:
             desired_scopes.append((None, ba.id))
-
     else:
-        # Both LOADING and UNLOADING present → (FROM, TO) pairing,
-        # respecting route order (FROM before TO).
         for from_ba in loading_sorted:
             from_idx = _ba_loc_index(from_ba)
             for to_ba in unloading_sorted:
@@ -561,37 +886,30 @@ def _apply_materials_payload_to_booking(
                 if from_idx < to_idx:
                     desired_scopes.append((from_ba.id, to_ba.id))
 
-        # Fallback: if route ordering made this empty (strange data),
-        # at least keep FROM-only tables so the booking is usable.
         if not desired_scopes:
             for ba in loading_sorted:
                 desired_scopes.append((ba.id, None))
 
-    # Deduplicate while preserving order
     desired_scopes = list(dict.fromkeys(desired_scopes))
 
-    # Map existing materials by (from_id, to_id) scope
     existing_by_scope: dict[Tuple[Optional[int], Optional[int]], BookingMaterial] = {}
     materials = list(getattr(booking, "material_tables", []))
     for m in materials:
         key = (m.booking_authority_id, m.to_booking_authority_id)
         existing_by_scope[key] = m
 
-    # On edit, remove any materials whose scope is no longer desired
     if replace_existing:
         for key, mat in list(existing_by_scope.items()):
             if key not in desired_scopes:
                 db.session.delete(mat)
                 existing_by_scope.pop(key, None)
 
-    # Build / rebuild materials for desired scopes
     seq_counter = 1
     for from_id, to_id in desired_scopes:
         key = (from_id, to_id)
         material = existing_by_scope.get(key)
 
         if material is None:
-            # New material table for this scope
             material = BookingMaterial(
                 booking=booking,
                 booking_authority_id=from_id,
@@ -603,8 +921,7 @@ def _apply_materials_payload_to_booking(
         _rebuild_material_from_block(material, base_block, sequence_index=seq_counter)
         seq_counter += 1
 
-    # No commit here; caller is responsible for db.session.commit().
-
+    return True
 
 def _create_booking_core(
     from_codes,
@@ -622,13 +939,11 @@ def _create_booking_core(
     On error: flashes messages and returns None.
     On success: commits and returns the Booking instance.
     """
-    # Lorry must exist
     lorry = LorryDetails.query.get(lorry_id)
     if not lorry:
         flash("Selected lorry does not exist.", "error")
         return None
 
-    # There must be an active agreement; that defines the company as well
     active_agreement = Agreement.query.filter_by(is_active=True).first()
     if not active_agreement:
         flash(
@@ -637,15 +952,11 @@ def _create_booking_core(
         )
         return None
 
-    # ------------------------------------------------------------------
-    # ROUTE / LOCATIONS (shared logic)
-    # ------------------------------------------------------------------
     seq_codes = from_codes + dest_codes
     if len(seq_codes) < 2:
         flash("Route must contain at least two locations.", "error")
         return None
 
-    # Enforce that each location appears only once in this booking's route
     seen = set()
     duplicates = []
     for c in seq_codes:
@@ -660,7 +971,6 @@ def _create_booking_core(
         )
         return None
 
-    # Look up Location objects in order and ensure all exist
     locations = []
     missing_codes = []
     code_to_location = {}
@@ -681,7 +991,6 @@ def _create_booking_core(
         flash(f"Unknown location code(s): {human}.", "error")
         return None
 
-    # Validate authorities: at least one per FROM and DEST location
     missing_loading = []
     for code in from_codes:
         auth_ids = request.form.getlist(f"loading_{code}[]")
@@ -709,7 +1018,6 @@ def _create_booking_core(
         flash(" ".join(msgs), "error")
         return None
 
-    # Prepare inputs for route hashing/naming:
     all_codes = [loc.code for loc in locations]
     first_code = all_codes[0]
     last_code = all_codes[-1]
@@ -722,10 +1030,8 @@ def _create_booking_core(
         trip_km,
     )
 
-    # Either fetch existing route or create a new one
     route = Route.query.filter_by(code=route_code).first()
     if route:
-        # If an existing route with this pattern has a different distance, reject
         if route.total_km != trip_km:
             flash(
                 f"Existing route {route.code} has total distance {route.total_km} KM, "
@@ -734,16 +1040,14 @@ def _create_booking_core(
             )
             return None
     else:
-        # Create the Route
         route = Route(
             code=route_code,
             name=route_name,
             total_km=trip_km,
         )
         db.session.add(route)
-        db.session.flush()  # get route.id
+        db.session.flush()
 
-        # Create RouteStops for this new route
         for idx, loc in enumerate(locations, start=1):
             stop = RouteStop(
                 route_id=route.id,
@@ -754,9 +1058,6 @@ def _create_booking_core(
             )
             db.session.add(stop)
 
-    # -------------------------------
-    # Create the Booking header
-    # -------------------------------
     remarks_value = remarks_prefix if remarks_prefix else None
 
     booking = Booking(
@@ -770,11 +1071,8 @@ def _create_booking_core(
         remarks=remarks_value,
     )
     db.session.add(booking)
-    db.session.flush()  # get booking.id
+    db.session.flush()
 
-    # -------------------------------
-    # Create BookingAuthority entries
-    # -------------------------------
     loading_seq = 1
     for code in from_codes:
         auth_ids = request.form.getlist(f"loading_{code}[]")
@@ -811,15 +1109,18 @@ def _create_booking_core(
             db.session.add(ba)
             unloading_seq += 1
 
-    # -------------------------------
-    # MATERIALS: create ORM entities (delegated)
-    # -------------------------------
-    _apply_materials_payload_to_booking(
+    db.session.flush()
+
+    ok = _apply_materials_payload_to_booking(
         booking,
-        loading_bas_unused=[],  # kept for signature compatibility
+        loading_bas_unused=[],
         materials_payload=materials_payload,
         replace_existing=False,
     )
+
+    if not ok:
+        db.session.rollback()
+        return None
 
     db.session.commit()
     return booking
@@ -827,7 +1128,6 @@ def _create_booking_core(
 
 @admin_bp.route("/booking/add", methods=["POST"])
 def add_booking():
-    # FROM and DESTINATION location codes from the form
     from_codes_raw = request.form.getlist("from_locations[]")
     dest_codes_raw = request.form.getlist("dest_locations[]")
 
@@ -836,13 +1136,11 @@ def add_booking():
 
     errors = []
 
-    # Need at least one FROM and one DEST location
     if not from_codes:
         errors.append("Add at least one FROM location.")
     if not dest_codes:
         errors.append("Add at least one DESTINATION location.")
 
-    # Placement date: required and cannot be before booking date (today)
     placement_raw = (request.form.get("placement_date") or "").strip()
     placement_date = None
     today = date.today()
@@ -857,7 +1155,6 @@ def add_booking():
         except ValueError:
             errors.append("Invalid placement date.")
 
-    # Trip KM and lorry_id
     trip_km = request.form.get("trip_km", type=int)
     lorry_id = request.form.get("lorry_id", type=int)
 
@@ -870,12 +1167,10 @@ def add_booking():
         flash(" ".join(errors), "error")
         return _redirect_to_tab("#booking")
 
-    # MATERIALS via shared helper (canonical structure)
     materials_payload = _parse_materials_for_booking()
     if materials_payload is None:
         return _redirect_to_tab("#booking")
 
-    # booking_date for normal flow is "today"
     booking_date = today
 
     booking = _create_booking_core(
@@ -898,17 +1193,9 @@ def add_booking():
 
 @admin_bp.route("/booking/backdated", methods=["GET"])
 def backdated_booking_view():
-    """
-    Show the Backdated Booking entry form.
-    Uses the same data structures as the main booking tab.
-    """
-    # Lorry list
     lorries = LorryDetails.query.order_by(LorryDetails.capacity).all()
-
-    # All known locations (for datalist autocomplete)
     all_locations = Location.query.order_by(Location.name).all()
 
-    # Build authority lookup map: { "CODE": [ {id, title, address}, ... ] }
     booking_auth_map = {}
     authorities = Authority.query.all()
 
@@ -924,7 +1211,6 @@ def backdated_booking_view():
             }
         )
 
-    # Sort inside each location for cleaner UI
     for code in booking_auth_map:
         booking_auth_map[code].sort(key=lambda x: x["title"].lower())
 
@@ -938,18 +1224,6 @@ def backdated_booking_view():
 
 @admin_bp.route("/booking/backdated-add", methods=["POST"])
 def add_backdated_booking():
-    """
-    Create a backdated booking.
-
-    This route is intentionally separate from add_booking() so that
-    post-facto entries feel non-routine ("procedure is the punishment").
-
-    Rules:
-      - booking_date <= placement_date <= today
-      - reason for backdating required
-      - All other invariants (materials, route, authorities, lorry, etc.)
-        are handled by _create_booking_core().
-    """
     from_codes_raw = request.form.getlist("from_locations[]")
     dest_codes_raw = request.form.getlist("dest_locations[]")
 
@@ -1010,7 +1284,6 @@ def add_backdated_booking():
         flash(" ".join(errors), "error")
         return _redirect_to_tab("#booking")
 
-    # MATERIALS via shared helper (canonical structure)
     materials_payload = _parse_materials_for_booking()
     if materials_payload is None:
         return _redirect_to_tab("#booking")
@@ -1036,10 +1309,6 @@ def add_backdated_booking():
 
 
 def _serialize_material_table(material: BookingMaterial) -> dict:
-    """
-    Helper to serialize a single BookingMaterial (header + lines)
-    into a JSON-friendly structure.
-    """
     if material is None:
         return {
             "mode": None,
@@ -1075,14 +1344,10 @@ def _serialize_material_table(material: BookingMaterial) -> dict:
 
 @admin_bp.route("/booking/<int:booking_id>/materials-json", methods=["GET"])
 def booking_materials_json(booking_id: int):
-    """
-    Legacy / simple JSON for "the" material table on a booking,
-    using booking.material_table (first material) as a convenience.
-    """
     booking = Booking.query.get_or_404(booking_id)
 
-    material = getattr(booking, "material_table", None)
-    if material is None:
+    tables = list(getattr(booking, "material_tables", [])) or []
+    if len(tables) == 0:
         return jsonify(
             {
                 "success": True,
@@ -1090,77 +1355,42 @@ def booking_materials_json(booking_id: int):
                 "mode": None,
                 "header": None,
                 "lines": [],
+                "note": "No material tables found.",
             }
         )
 
-    serialized = _serialize_material_table(material)
+    # Legacy endpoint: if multiscope is present, tell client to use the richer endpoint
+    if len(tables) > 1:
+        return jsonify(
+            {
+                "success": True,
+                "has_materials": True,
+                "is_multiscope": True,
+                "note": "Use /materials-per-authority-json for multiscope materials.",
+            }
+        )
 
+    serialized = _serialize_material_table(tables[0])
     return jsonify(
         {
             "success": True,
             "has_materials": True,
+            "is_multiscope": False,
             "mode": serialized["mode"],
             "header": serialized["header"],
             "lines": serialized["lines"],
         }
     )
 
-
-@admin_bp.route("/booking/<int:booking_id>/materials-per-authority-json", methods=["GET"])
 @admin_bp.route("/booking/<int:booking_id>/materials-per-authority-json", methods=["GET"])
 def booking_materials_per_authority_json(booking_id: int):
-    """
-    Return materials grouped per BookingAuthority (LOADING / UNLOADING),
-    ready for future per-authority material editors and letter generation.
-
-    Structure:
-      {
-        "success": true,
-        "booking_id": <int>,
-        "booking_level": [ ... ],   # materials with no authorities (FROM=None, TO=None)
-        "loading": [ ... ],         # per loading BA (FROM = that BA, TO may be set)
-        "unloading": [ ... ],       # per unloading BA (TO = that BA, FROM may be set)
-        "from_to": [ ... ]          # matrix-style list of all scoped materials
-      }
-
-    Each entry in loading/unloading/booking_level looks like:
-      {
-        "booking_material_id": ...,
-        "booking_authority_id": ... or null,     # FROM BA id (for loading)
-        "to_booking_authority_id": ... or null,  # TO BA id
-        "sequence_index": ...,
-        "role": "LOADING" / "UNLOADING" / "BOOKING",
-        "authority": { ... } or null,            # FROM authority (for compat)
-        "from_authority": { ... } or null,
-        "to_authority": { ... } or null,
-        "mode": ...,
-        "header": { ... },
-        "lines": [ ... ]
-      }
-
-    Each entry in from_to looks like:
-      {
-        "booking_material_id": ...,
-        "sequence_index": ...,
-        "from_ba_id": ... or null,
-        "to_ba_id": ... or null,
-        "from_role": "LOADING"/"UNLOADING"/null,
-        "to_role": "LOADING"/"UNLOADING"/null,
-        "from_authority": { ... } or null,
-        "to_authority": { ... } or null,
-        "mode": ...,
-        "header": { ... },
-        "lines": [ ... ]
-      }
-    """
     booking = Booking.query.get_or_404(booking_id)
 
     materials = list(getattr(booking, "material_tables", []))
 
-    # Map materials by FROM-side booking_authority_id
     mats_by_from_ba: dict[int | None, list[BookingMaterial]] = {}
     for m in materials:
-        key = m.booking_authority_id  # FROM side (may be None)
+        key = m.booking_authority_id
         mats_by_from_ba.setdefault(key, []).append(m)
 
     def authority_payload(ba: BookingAuthority | None):
@@ -1176,14 +1406,9 @@ def booking_materials_per_authority_json(booking_id: int):
             "location_name": loc.name if loc else None,
         }
 
-    # -----------------------------
-    # Booking-level materials:
-    #   FROM=None and TO=None
-    # -----------------------------
     booking_level = []
     for m in mats_by_from_ba.get(None, []):
         if m.to_booking_authority_id is not None:
-            # This is a TO-only or (None, TO) scope; handled later under 'unloading' / 'from_to'.
             continue
         payload = _serialize_material_table(m)
         booking_level.append(
@@ -1205,15 +1430,10 @@ def booking_materials_per_authority_json(booking_id: int):
     loading = []
     unloading = []
 
-    # -----------------------------
-    # Per-BA loading / unloading:
-    #   preserves your old structure
-    # -----------------------------
     for ba in booking.booking_authorities:
         role = (ba.role or "").upper()
         mats_for_from_ba = mats_by_from_ba.get(ba.id, [])
 
-        # Materials where this BA is the FROM side
         for m in mats_for_from_ba:
             payload = _serialize_material_table(m)
             from_auth = authority_payload(ba)
@@ -1225,7 +1445,7 @@ def booking_materials_per_authority_json(booking_id: int):
                 "to_booking_authority_id": m.to_booking_authority_id,
                 "sequence_index": m.sequence_index,
                 "role": role,
-                "authority": from_auth,      # backwards-compatible (FROM)
+                "authority": from_auth,
                 "from_authority": from_auth,
                 "to_authority": to_auth,
                 "mode": payload["mode"],
@@ -1236,14 +1456,11 @@ def booking_materials_per_authority_json(booking_id: int):
             if role == "LOADING":
                 loading.append(block)
             elif role == "UNLOADING":
-                # Rare case: FROM is an UNLOADING BA (if we ever allow that)
                 unloading.append(block)
 
-        # Additionally, handle TO-only materials (FROM=None, TO=this BA)
         for m in materials:
             if m.booking_authority_id is None and m.to_booking_authority_id == ba.id:
                 payload = _serialize_material_table(m)
-                from_auth = None
                 to_auth = authority_payload(ba)
                 block = {
                     "booking_material_id": m.id,
@@ -1251,8 +1468,8 @@ def booking_materials_per_authority_json(booking_id: int):
                     "to_booking_authority_id": ba.id,
                     "sequence_index": m.sequence_index,
                     "role": "UNLOADING",
-                    "authority": to_auth,   # for compat, treat TO as 'authority' here
-                    "from_authority": from_auth,
+                    "authority": to_auth,
+                    "from_authority": None,
                     "to_authority": to_auth,
                     "mode": payload["mode"],
                     "header": payload["header"],
@@ -1260,13 +1477,9 @@ def booking_materials_per_authority_json(booking_id: int):
                 }
                 unloading.append(block)
 
-    # -----------------------------
-    # Matrix-style from_to list
-    # -----------------------------
     from_to = []
 
     for m in materials:
-        # Skip pure booking-level entries (already in booking_level)
         if m.booking_authority_id is None and m.to_booking_authority_id is None:
             continue
 
@@ -1293,7 +1506,6 @@ def booking_materials_per_authority_json(booking_id: int):
             }
         )
 
-    # Sort for deterministic order
     loading.sort(key=lambda x: x["sequence_index"])
     unloading.sort(key=lambda x: x["sequence_index"])
     booking_level.sort(key=lambda x: x["sequence_index"])
@@ -1310,18 +1522,17 @@ def booking_materials_per_authority_json(booking_id: int):
         }
     )
 
+
 @admin_bp.route("/booking/<int:booking_id>/cancel", methods=["POST"])
 def cancel_booking(booking_id):
     booking = Booking.query.get_or_404(booking_id)
 
-    # Read redirect tab + optional history filters
     redirect_tab = request.form.get("redirect_tab") or "#booking"
     booking_scope = (request.form.get("booking_scope") or "").strip()
     booking_status = (request.form.get("booking_status") or "").strip()
     booking_search = (request.form.get("booking_search") or "").strip()
 
     def _redirect_after_cancel():
-        # When cancelling from History tab, preserve filters
         if redirect_tab == "#history":
             params = {}
             if booking_scope:
@@ -1331,7 +1542,6 @@ def cancel_booking(booking_id):
             if booking_search:
                 params["booking_search"] = booking_search
             return redirect(url_for("admin.dashboard", **params) + redirect_tab)
-        # Fallback: original behaviour
         return _redirect_to_tab(redirect_tab)
 
     if booking.status == "CANCELLED":
@@ -1352,11 +1562,9 @@ def cancel_booking(booking_id):
 
 @admin_bp.route("/booking/<int:booking_id>", methods=["GET", "POST"])
 def booking_detail(booking_id):
-    """View / edit a booking (safe fields only: placement_date, lorry)."""
     booking = Booking.query.get_or_404(booking_id)
 
     def _redirect_self_with_filters():
-        """Redirect back to this detail view, preserving any history filters in the query string."""
         params = {
             "booking_id": booking.id,
             "booking_scope": request.args.get("booking_scope"),
@@ -1366,19 +1574,15 @@ def booking_detail(booking_id):
         params = {k: v for k, v in params.items() if v}
         return redirect(url_for("admin.booking_detail", **params))
 
-    # Disallow edits on cancelled bookings
     if booking.status == "CANCELLED" and request.method == "POST":
         flash("Cancelled bookings cannot be edited.", "error")
         return _redirect_self_with_filters()
 
-    # We'll let the user change placement_date + lorry_id only
-    # Everything else is read-only for audit reasons.
     lorries = LorryDetails.query.order_by(LorryDetails.capacity).all()
 
     if request.method == "POST":
         errors: list[str] = []
 
-        # Placement date: required, cannot be before booking_date
         placement_raw = (request.form.get("placement_date") or "").strip()
         placement_date = None
         if not placement_raw:
@@ -1386,15 +1590,11 @@ def booking_detail(booking_id):
         else:
             try:
                 placement_date = datetime.strptime(placement_raw, "%Y-%m-%d").date()
-                # booking.booking_date is already set when created
                 if placement_date < booking.booking_date:
-                    errors.append(
-                        "Placement date cannot be earlier than the booking date."
-                    )
+                    errors.append("Placement date cannot be earlier than the booking date.")
             except ValueError:
                 errors.append("Invalid placement date.")
 
-        # Lorry: must exist
         lorry_id = request.form.get("lorry_id", type=int)
         lorry = None
         if not lorry_id:
@@ -1426,7 +1626,6 @@ def booking_detail(booking_id):
             trip_serial = idx
             break
 
-    # Materials (read-only, legacy single-table convenience)
     material = getattr(booking, "material_table", None)
 
     return render_template(
@@ -1436,6 +1635,7 @@ def booking_detail(booking_id):
         lorries=lorries,
         trip_serial=trip_serial,
     )
+
 
 def _parse_materials_from_edit_form(mode: str):
     """
@@ -1452,6 +1652,18 @@ def _parse_materials_from_edit_form(mode: str):
     if mode not in ("ITEM", "LUMPSUM", "ATTACHED"):
         flash("Invalid material mode.", "error")
         return None
+
+    def parse_float(form_name: str):
+        raw = request.form.get(form_name)
+        if raw is None:
+            return None
+        raw = raw.strip()
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            return None
 
     # -------------------------------
     # ATTACHED: ignore UI noise early
@@ -1478,38 +1690,15 @@ def _parse_materials_from_edit_form(mode: str):
             ],
         }
 
-    def parse_float(form_name: str):
-        raw = request.form.get(form_name)
-        if raw is None:
-            return None
-        raw = raw.strip()
-        if not raw:
-            return None
-        try:
-            return float(raw)
-        except ValueError:
-            return None
-
-    # Header totals
     header_qty = None
     header_qty_unit = None
     if mode == "LUMPSUM":
         header_qty = parse_float("material_total_quantity")
         total_unit_raw = (request.form.get("material_total_quantity_unit") or "").strip()
         header_qty_unit = total_unit_raw or None
-    elif mode == "ATTACHED":
-        # In ATTACHED mode, header qty/unit must not be used
-        total_unit_raw = (request.form.get("material_total_quantity_unit") or "").strip()
-        if total_unit_raw:
-            flash("In ATTACHED mode, do not enter Total Quantity Unit.", "error")
-            return None
-        if parse_float("material_total_quantity") is not None:
-            flash("In ATTACHED mode, do not enter Total Quantity.", "error")
-            return None
 
     header_amount = parse_float("material_total_amount")
 
-    # Lines from form
     desc_list = request.form.getlist("line_description[]")
     unit_list = request.form.getlist("line_unit[]")
     qty_list = request.form.getlist("line_quantity[]")
@@ -1547,7 +1736,6 @@ def _parse_materials_from_edit_form(mode: str):
             has_line_qty = True
 
         if mode == "ITEM":
-            # ITEM: qty+rate must come together
             if (qty_val is None) ^ (rate_val is None):
                 flash(
                     "In ITEM mode, each material row must have BOTH Quantity and Rate (or leave both blank).",
@@ -1555,7 +1743,6 @@ def _parse_materials_from_edit_form(mode: str):
                 )
                 return None
 
-            # Disallow manual amount without qty+rate
             if qty_val is None and rate_val is None and amt_val is not None:
                 flash(
                     "In ITEM mode, do not enter Amount unless Quantity and Rate are provided (Amount is auto-calculated).",
@@ -1563,19 +1750,8 @@ def _parse_materials_from_edit_form(mode: str):
                 )
                 return None
 
-            # Compute amount
             if qty_val is not None and rate_val is not None:
                 amt_val = qty_val * rate_val
-
-        elif mode == "ATTACHED":
-            # Lines must not carry numbers
-            if qty_val is not None or rate_val is not None or amt_val is not None:
-                flash(
-                    "In ATTACHED mode, do not enter Quantity/Rate/Amount in lines. Use only Total Amount.",
-                    "error",
-                )
-                return None
-            # We will ignore user-provided line descriptions anyway (normalize later).
 
         lines_data.append(
             {
@@ -1588,7 +1764,6 @@ def _parse_materials_from_edit_form(mode: str):
         )
         has_any_line = True
 
-    # Mode invariants
     if mode == "ITEM":
         if not has_any_line:
             flash("In ITEM mode, enter at least one material line.", "error")
@@ -1625,24 +1800,6 @@ def _parse_materials_from_edit_form(mode: str):
             )
             return None
 
-    elif mode == "ATTACHED":
-        if header_amount is None:
-            flash("In ATTACHED mode, Total Amount is required.", "error")
-            return None
-
-        # Normalize to a single placeholder line
-        lines_data = [
-            {
-                "description": "As per list attached.",
-                "unit": None,
-                "quantity": None,
-                "rate": None,
-                "amount": None,
-            }
-        ]
-        header_qty = None
-        header_qty_unit = None
-
     return {
         "mode": mode,
         "total_quantity": header_qty,
@@ -1651,48 +1808,42 @@ def _parse_materials_from_edit_form(mode: str):
         "lines": lines_data,
     }
 
+
 @admin_bp.route("/booking/<int:booking_id>/materials-edit", methods=["POST"])
 def booking_materials_edit(booking_id: int):
-    """
-    Create or update the material tables for an existing booking.
-
-    Semantics:
-
-      - The edit form represents a single "base" material definition.
-      - That definition is applied to all scopes according to the same rules
-        as creation (route-aware):
-
-            * if both LOADING and UNLOADING exist:
-                  one table per (LOADING, UNLOADING) pair
-                  where FROM location precedes TO location in the route
-                  (fallback to FROM-only if no valid pairs)
-
-            * elif only LOADING:
-                  one table per LOADING BA
-
-            * elif only UNLOADING:
-                  one table per UNLOADING BA
-
-            * else:
-                  single booking-level table
-
-      - Existing BookingMaterial rows whose (FROM, TO) scope is no longer
-        desired are deleted. For the remaining / desired scopes, we reuse
-        the existing BookingMaterial (if present) and overwrite its header
-        + lines from the edited base block.
-    """
     booking = Booking.query.get_or_404(booking_id)
 
-    # Disallow edits on cancelled bookings
     if booking.status == "CANCELLED":
         flash("Cancelled bookings cannot be edited.", "error")
         return redirect(url_for("admin.booking_detail", booking_id=booking.id))
 
-    # Mode: "", ITEM, or LUMPSUM
+    # If UI posts multiscope JSON, prefer that
+    raw_scopes_json = (request.form.get("materials_scopes_json") or "").strip()
+
+    if raw_scopes_json:
+        materials_payload = _parse_material_scopes_from_json(raw_scopes_json)
+        if materials_payload is None:
+            return redirect(url_for("admin.booking_detail", booking_id=booking.id))
+
+        ok = _apply_materials_payload_to_booking(
+            booking,
+            loading_bas_unused=[],
+            materials_payload=materials_payload,   # mode=AUTHORITY_PAIR
+            replace_existing=True,                 # true edit semantics
+        )
+        if not ok:
+            db.session.rollback()
+            return redirect(url_for("admin.booking_detail", booking_id=booking.id))
+
+        db.session.commit()
+        flash("Scoped material tables saved.", "success")
+        return redirect(url_for("admin.booking_detail", booking_id=booking.id))
+
+    # -------------------------
+    # Legacy single-block edit
+    # -------------------------
     mode = (request.form.get("material_mode") or "").strip().upper()
 
-    # From now on, a booking must always have a material list.
-    # So an empty mode is not allowed here.
     if not mode:
         flash(
             "Each booking must include a material list. "
@@ -1705,64 +1856,52 @@ def booking_materials_edit(booking_id: int):
         flash("Invalid material mode.", "error")
         return redirect(url_for("admin.booking_detail", booking_id=booking.id))
 
-    # Parse edit form into a block (same shape as creation parser)
     block = _parse_materials_from_edit_form(mode)
     if block is None:
-        # Validation errors already flashed
         return redirect(url_for("admin.booking_detail", booking_id=booking.id))
 
     materials_payload = {
-        "per_authority": {
-            None: block,
-        }
+        "mode": "BASE_BLOCK",
+        "per_authority": {None: block},
     }
 
-    # Apply the block to all relevant material tables (update mode)
-    _apply_materials_payload_to_booking(
+    ok = _apply_materials_payload_to_booking(
         booking,
         loading_bas_unused=[],
         materials_payload=materials_payload,
         replace_existing=True,
     )
 
+    if not ok:
+        db.session.rollback()
+        return redirect(url_for("admin.booking_detail", booking_id=booking.id))
+
     db.session.commit()
     flash("Material list saved.", "success")
     return redirect(url_for("admin.booking_detail", booking_id=booking.id))
 
-
 @admin_bp.route("/route-km-json", methods=["GET"])
 def route_km_json():
-    """
-    Return possible KM options for routes between two endpoints.
-
-    Used by Home Depot KM assistant:
-      - If exactly one option is returned, UI may auto-fill.
-      - If multiple, UI shows them as suggestions for the KM field.
-    """
     from_code = (request.args.get("from") or "").strip().upper()
     to_code = (request.args.get("to") or "").strip().upper()
 
     if not from_code or not to_code:
         return jsonify({"options": []})
 
-    # Validate both locations exist
     from_loc = Location.query.filter_by(code=from_code).first()
     to_loc = Location.query.filter_by(code=to_code).first()
 
     if not from_loc or not to_loc:
         return jsonify({"options": []})
 
-    # Only active routes are considered
     routes = Route.query.filter_by(is_active=True).all()
 
     km_options = []
 
     for r in routes:
-        # Collect start / end cluster codes from RouteStop flags
         start_codes = [s.location.code for s in r.stops if s.is_start_cluster]
         end_codes = [s.location.code for s in r.stops if s.is_end_cluster]
 
-        # Match in either direction: from→to or to→from
         ok_1 = from_code in start_codes and to_code in end_codes
         ok_2 = to_code in start_codes and from_code in end_codes
 
@@ -1775,7 +1914,6 @@ def route_km_json():
                 }
             )
 
-    # Deduplicate by (km, route_code) just in case
     seen = set()
     unique = []
     for opt in km_options:

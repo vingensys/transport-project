@@ -8,19 +8,14 @@ if (window.__BOOKING_JS_INITED__) {
   window.__BOOKING_JS_INITED__ = true;
 
   document.addEventListener("DOMContentLoaded", function () {
-    // This is injected from the template via:
-    // window.BOOKING_AUTH_BY_CODE = {{ booking_auth_map|tojson }};
     const BOOKING_AUTH_BY_CODE = window.BOOKING_AUTH_BY_CODE || {};
     const MATERIALS_URL_TEMPLATE =
       window.FLASK_BOOKING_MATERIALS_URL_TEMPLATE || null;
 
-    const acc = document.getElementById("materialsScopesAccordion");
-    if (acc) {
-      acc.insertAdjacentHTML(
-        "beforebegin",
-        '<div class="alert alert-warning py-1 small mb-2">booking.js: materials init reached ✅</div>'
-      );
-    }
+    // Remove unintended required constraints if any
+    document.querySelectorAll('select[name="material_mode"]').forEach((el) => {
+      el.removeAttribute("required");
+    });
 
     // ---------------------------------------
     // KM suggestions (Home Depot assistant)
@@ -41,66 +36,40 @@ if (window.__BOOKING_JS_INITED__) {
 
       (options || []).forEach((opt) => {
         if (!opt || opt.km == null) return;
-
         const o = document.createElement("option");
         o.value = opt.km;
-
         const parts = [`${opt.km} km`];
-        if (opt.route_name) {
-          parts.push(opt.route_name);
-        }
+        if (opt.route_name) parts.push(opt.route_name);
         o.label = parts.join(" – ");
-
         tripKmDatalist.appendChild(o);
       });
     }
 
-    // Central KM assistant: inspects current DOM + home settings
     function recomputeHomeKmSuggestions() {
       const kmInput = tripKmInput;
-      if (!kmInput) {
-        setKmSuggestions([]);
-        return;
-      }
+      if (!kmInput) return setKmSuggestions([]);
 
       const homeConfigEl = document.getElementById("bookingHomeConfig");
-      if (!homeConfigEl) {
-        setKmSuggestions([]);
-        return;
-      }
+      if (!homeConfigEl) return setKmSuggestions([]);
 
       const homeCode = (homeConfigEl.dataset.homeCode || "").toUpperCase();
       const homeDisplay = homeConfigEl.dataset.homeDisplay || "";
+      if (!homeCode || !homeDisplay) return setKmSuggestions([]);
 
-      if (!homeCode || !homeDisplay) {
-        setKmSuggestions([]);
-        return;
-      }
-
-      // Only assist when "Home booking = Yes"
       const homeYes = document.getElementById("homeBookingYes");
-      if (!homeYes || !homeYes.checked) {
-        setKmSuggestions([]);
-        return;
-      }
+      if (!homeYes || !homeYes.checked) return setKmSuggestions([]);
 
       const fromList = document.getElementById("fromBookingLocationList");
       const destList = document.getElementById("destBookingLocationList");
-      if (!fromList || !destList) {
-        setKmSuggestions([]);
-        return;
-      }
+      if (!fromList || !destList) return setKmSuggestions([]);
 
-      const fromItems = Array.from(
-        fromList.querySelectorAll("li[data-code]")
-      ).map((li) => li.dataset.code);
-      const destItems = Array.from(
-        destList.querySelectorAll("li[data-code]")
-      ).map((li) => li.dataset.code);
+      const fromItems = Array.from(fromList.querySelectorAll("li[data-code]")).map(
+        (li) => li.dataset.code
+      );
+      const destItems = Array.from(destList.querySelectorAll("li[data-code]")).map(
+        (li) => li.dataset.code
+      );
 
-      // Determine the single "remote" station:
-      // - Home in FROM + exactly 1 remote in DEST  → remote = DEST[0]
-      // - Home in DEST + exactly 1 remote in FROM  → remote = FROM[0]
       let remote = null;
 
       if (fromItems.includes(homeCode) && destItems.length === 1) {
@@ -109,10 +78,7 @@ if (window.__BOOKING_JS_INITED__) {
         remote = fromItems[0];
       }
 
-      if (!remote) {
-        setKmSuggestions([]);
-        return;
-      }
+      if (!remote) return setKmSuggestions([]);
 
       const url =
         "/admin/route-km-json?from=" +
@@ -126,22 +92,13 @@ if (window.__BOOKING_JS_INITED__) {
           const options = (data && data.options) || [];
           setKmSuggestions(options);
 
-          // If there is exactly one clear match, auto-fill for convenience
           if (options.length === 1 && options[0].km != null) {
-            const km = options[0].km;
-            kmInput.value = km;
+            kmInput.value = options[0].km;
             kmInput.classList.add("border", "border-success");
-            setTimeout(() => {
-              kmInput.classList.remove("border", "border-success");
-            }, 2000);
+            setTimeout(() => kmInput.classList.remove("border", "border-success"), 2000);
           }
-          // If multiple options: user will see them as dropdown suggestions
-          // and pick one; we don't overwrite their input.
         })
-        .catch(() => {
-          // On error, just clear suggestions; user can type manually.
-          setKmSuggestions([]);
-        });
+        .catch(() => setKmSuggestions([]));
     }
 
     // ---------------------------------------
@@ -155,16 +112,13 @@ if (window.__BOOKING_JS_INITED__) {
       if (start !== -1 && end !== -1 && end > start + 1) {
         return raw.substring(start + 1, end).trim();
       }
-      return raw; // fallback: user typed pure code
+      return raw;
     }
 
     function setupBookingPanel(prefix, listId, hiddenName, role) {
       const input = document.querySelector(`input[data-role="${prefix}-input"]`);
-      const button = document.querySelector(
-        `button[data-role="${prefix}-add"]`
-      );
+      const button = document.querySelector(`button[data-role="${prefix}-add"]`);
       const list = document.getElementById(listId);
-
       if (!input || !button || !list) return;
 
       function addItem() {
@@ -179,7 +133,6 @@ if (window.__BOOKING_JS_INITED__) {
         li.dataset.code = code;
         li.dataset.side = role; // LOADING / UNLOADING
 
-        // Top row: label + hidden code + remove button
         const topRow = document.createElement("div");
         topRow.className = "d-flex justify-content-between align-items-center";
 
@@ -199,31 +152,28 @@ if (window.__BOOKING_JS_INITED__) {
         removeBtn.textContent = "×";
         removeBtn.addEventListener("click", function () {
           li.remove();
-          // FROM/DEST changed → recompute suggestions
           recomputeHomeKmSuggestions();
+          scheduleScopesRebuild(); // scopes changed
         });
         topRow.appendChild(removeBtn);
 
         li.appendChild(topRow);
 
-        // Authority picker button
         const pickBtn = document.createElement("button");
         pickBtn.type = "button";
         pickBtn.className = "btn btn-sm btn-outline-primary mt-2";
         pickBtn.textContent = "Select Authorities";
         pickBtn.dataset.role = "open-authority-picker";
         pickBtn.dataset.code = code;
-        pickBtn.dataset.side = role; // LOADING / UNLOADING
+        pickBtn.dataset.side = role;
         li.appendChild(pickBtn);
 
-        // Summary display
         const summaryDiv = document.createElement("div");
         summaryDiv.className = "small mt-1 text-muted";
         summaryDiv.dataset.role = "authority-summary";
         summaryDiv.textContent = "None selected";
         li.appendChild(summaryDiv);
 
-        // Hidden container for selected authority IDs
         const selectedContainer = document.createElement("div");
         selectedContainer.dataset.role = "selected-authorities";
         li.appendChild(selectedContainer);
@@ -232,8 +182,8 @@ if (window.__BOOKING_JS_INITED__) {
         input.value = "";
         input.focus();
 
-        // FROM/DEST changed → recompute suggestions
         recomputeHomeKmSuggestions();
+        scheduleScopesRebuild(); // scopes changed
       }
 
       button.addEventListener("click", addItem);
@@ -245,70 +195,26 @@ if (window.__BOOKING_JS_INITED__) {
       });
     }
 
-    // FROM side: will submit as from_locations[] and loading_XXX[]
-    setupBookingPanel(
-      "from-booking",
-      "fromBookingLocationList",
-      "from_locations[]",
-      "LOADING"
-    );
+    setupBookingPanel("from-booking", "fromBookingLocationList", "from_locations[]", "LOADING");
+    setupBookingPanel("dest-booking", "destBookingLocationList", "dest_locations[]", "UNLOADING");
 
-    // DEST side: will submit as dest_locations[] and unloading_XXX[]
-    setupBookingPanel(
-      "dest-booking",
-      "destBookingLocationList",
-      "dest_locations[]",
-      "UNLOADING"
-    );
-
-    // Re-evaluate KM suggestions when FROM / DEST lists change manually
-    document.addEventListener("click", function (e) {
-      if (
-        e.target.matches('[data-role="from-booking-add"]') ||
-        e.target.matches('[data-role="dest-booking-add"]')
-      ) {
-        setTimeout(() => {
-          const homeYes = document.getElementById("homeBookingYes");
-          if (homeYes && homeYes.checked) {
-            recomputeHomeKmSuggestions();
-          }
-        }, 200);
-      }
-
-      if (e.target.closest("button.btn-link.text-danger")) {
-        setTimeout(() => {
-          recomputeHomeKmSuggestions();
-        }, 200);
-      }
-    });
-
-    // ========================================
+    // ---------------------------------------
     // Home depot helper (UI only)
-    // ========================================
+    // ---------------------------------------
     (function setupHomeDepotHelper() {
       const homeConfigEl = document.getElementById("bookingHomeConfig");
-      if (!homeConfigEl) {
-        return;
-      }
+      if (!homeConfigEl) return;
 
       const homeCode = (homeConfigEl.dataset.homeCode || "").toUpperCase();
       const homeDisplay = homeConfigEl.dataset.homeDisplay || "";
       const homeAuthorityId = homeConfigEl.dataset.homeAuthorityId || "";
 
-      const fromInput = document.querySelector(
-        '[data-role="from-booking-input"]'
-      );
-      const fromAddBtn = document.querySelector(
-        '[data-role="from-booking-add"]'
-      );
+      const fromInput = document.querySelector('[data-role="from-booking-input"]');
+      const fromAddBtn = document.querySelector('[data-role="from-booking-add"]');
       const fromList = document.getElementById("fromBookingLocationList");
 
-      const destInput = document.querySelector(
-        '[data-role="dest-booking-input"]'
-      );
-      const destAddBtn = document.querySelector(
-        '[data-role="dest-booking-add"]'
-      );
+      const destInput = document.querySelector('[data-role="dest-booking-input"]');
+      const destAddBtn = document.querySelector('[data-role="dest-booking-add"]');
       const destList = document.getElementById("destBookingLocationList");
 
       const directionCol = document.getElementById("homeDirectionCol");
@@ -320,9 +226,7 @@ if (window.__BOOKING_JS_INITED__) {
 
       function removeCodeFromList(list, code) {
         if (!list || !code) return;
-        list.querySelectorAll('li[data-code="' + code + '"]').forEach((li) =>
-          li.remove()
-        );
+        list.querySelectorAll('li[data-code="' + code + '"]').forEach((li) => li.remove());
       }
 
       function addHomeTo(listType) {
@@ -335,61 +239,41 @@ if (window.__BOOKING_JS_INITED__) {
           input = fromInput;
           addBtn = fromAddBtn;
           list = fromList;
-          side = "LOADING"; // home is origin → loading side
+          side = "LOADING";
         } else if (listType === "DEST") {
           if (!destInput || !destAddBtn || !destList) return;
           if (listHasCode(destList, homeCode)) return;
           input = destInput;
           addBtn = destAddBtn;
           list = destList;
-          side = "UNLOADING"; // home is destination → unloading side
-        } else {
-          return;
-        }
+          side = "UNLOADING";
+        } else return;
 
-        // Add the home location li via existing logic
         input.value = homeDisplay;
         addBtn.click();
 
-        // If no default authority configured, stop here
         if (!homeAuthorityId) return;
 
-        // Find the li we just added
         const li = list.querySelector('li[data-code="' + homeCode + '"]');
         if (!li) return;
 
-        const selectedContainer = li.querySelector(
-          "[data-role='selected-authorities']"
-        );
+        const selectedContainer = li.querySelector("[data-role='selected-authorities']");
         const summaryDiv = li.querySelector("[data-role='authority-summary']");
         if (!selectedContainer || !summaryDiv) return;
 
-        // Clear any existing selection for this li
         selectedContainer.innerHTML = "";
 
-        // Create hidden input for this authority (loading_XXX[] or unloading_XXX[])
         const hidden = document.createElement("input");
         hidden.type = "hidden";
         hidden.value = homeAuthorityId;
-        hidden.name =
-          side === "LOADING"
-            ? `loading_${homeCode}[]`
-            : `unloading_${homeCode}[]`;
-
+        hidden.name = side === "LOADING" ? `loading_${homeCode}[]` : `unloading_${homeCode}[]`;
         selectedContainer.appendChild(hidden);
 
-        // Update summary text using BOOKING_AUTH_BY_CODE
         const listForCode = BOOKING_AUTH_BY_CODE[homeCode] || [];
         const authNumericId = parseInt(homeAuthorityId, 10);
-        const match = listForCode.find(
-          (a) => Number(a.id) === authNumericId
-        );
+        const match = listForCode.find((a) => Number(a.id) === authNumericId);
 
-        if (match) {
-          summaryDiv.textContent = match.title;
-        } else {
-          summaryDiv.textContent = "Default home authority";
-        }
+        summaryDiv.textContent = match ? match.title : "Default home authority";
       }
 
       function syncHomeLocation() {
@@ -398,56 +282,37 @@ if (window.__BOOKING_JS_INITED__) {
         const inboundRadio = document.getElementById("homeInbound");
         const outwardRadio = document.getElementById("homeOutward");
 
-        const isHome =
-          homeYes && homeYes.checked && (!homeNo || !homeNo.checked);
+        const isHome = homeYes && homeYes.checked && (!homeNo || !homeNo.checked);
 
-        // Show/hide the direction column based on home depot toggle
-        if (directionCol) {
-          if (isHome) {
-            directionCol.classList.remove("d-none");
-          } else {
-            directionCol.classList.add("d-none");
-          }
-        }
+        if (directionCol) directionCol.classList.toggle("d-none", !isHome);
 
-        // If not a home depot booking, remove the home code from both lists
         if (!isHome) {
           removeCodeFromList(fromList, homeCode);
           removeCodeFromList(destList, homeCode);
           setKmSuggestions([]);
+          recomputeHomeKmSuggestions();
+          scheduleScopesRebuild(); // scopes changed
           return;
         }
 
-        // Home depot ON → place home either in FROM or DEST based on direction
         const inboundSelected = inboundRadio && inboundRadio.checked;
         const outwardSelected = outwardRadio && outwardRadio.checked;
 
-        // Remove from both first
         removeCodeFromList(fromList, homeCode);
         removeCodeFromList(destList, homeCode);
 
-        if (inboundSelected) {
-          // Inbound: far → home, so home at DEST
-          addHomeTo("DEST");
-        } else if (outwardSelected) {
-          // Outward: home → far, so home at FROM
-          addHomeTo("FROM");
-        }
+        if (inboundSelected) addHomeTo("DEST");
+        else if (outwardSelected) addHomeTo("FROM");
 
-        // After any change to home placement, recompute KM suggestions
         recomputeHomeKmSuggestions();
+        scheduleScopesRebuild(); // scopes changed
       }
 
-      ["homeBookingYes", "homeBookingNo", "homeInbound", "homeOutward"].forEach(
-        (id) => {
-          const el = document.getElementById(id);
-          if (el) {
-            el.addEventListener("change", syncHomeLocation);
-          }
-        }
-      );
+      ["homeBookingYes", "homeBookingNo", "homeInbound", "homeOutward"].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener("change", syncHomeLocation);
+      });
 
-      // Initial state on page load
       syncHomeLocation();
     })();
 
@@ -474,13 +339,10 @@ if (window.__BOOKING_JS_INITED__) {
 
       const list = BOOKING_AUTH_BY_CODE[code] || [];
 
-      // Read already selected IDs from currentLi
-      const selectedContainer = currentLi.querySelector(
-        "[data-role='selected-authorities']"
+      const selectedContainer = currentLi.querySelector("[data-role='selected-authorities']");
+      const existingIds = Array.from(selectedContainer.querySelectorAll("input[type='hidden']")).map(
+        (h) => h.value
       );
-      const existingIds = Array.from(
-        selectedContainer.querySelectorAll("input[type='hidden']")
-      ).map((h) => h.value);
 
       if (!list.length) {
         emptyDiv.classList.remove("d-none");
@@ -495,10 +357,7 @@ if (window.__BOOKING_JS_INITED__) {
           cb.className = "form-check-input";
           cb.id = `auth-${side}-${code}-${a.id}`;
           cb.dataset.authId = a.id;
-
-          if (existingIds.includes(String(a.id))) {
-            cb.checked = true;
-          }
+          if (existingIds.includes(String(a.id))) cb.checked = true;
 
           const label = document.createElement("label");
           label.className = "form-check-label ms-2";
@@ -522,219 +381,253 @@ if (window.__BOOKING_JS_INITED__) {
         const side = currentLi.dataset.side;
         const code = currentLi.dataset.code;
 
-        const container = currentLi.querySelector(
-          "[data-role='selected-authorities']"
-        );
+        const container = currentLi.querySelector("[data-role='selected-authorities']");
         container.innerHTML = "";
 
         const selectedTitles = [];
 
-        document
-          .querySelectorAll("#authorityPickerList input[type='checkbox']")
-          .forEach(function (cb) {
-            if (cb.checked) {
-              const hidden = document.createElement("input");
-              hidden.type = "hidden";
-              hidden.value = cb.dataset.authId;
+        document.querySelectorAll("#authorityPickerList input[type='checkbox']").forEach(function (cb) {
+          if (cb.checked) {
+            const hidden = document.createElement("input");
+            hidden.type = "hidden";
+            hidden.value = cb.dataset.authId;
+            hidden.name = side === "LOADING" ? `loading_${code}[]` : `unloading_${code}[]`;
+            container.appendChild(hidden);
 
-              if (side === "LOADING") {
-                hidden.name = `loading_${code}[]`;
-              } else {
-                hidden.name = `unloading_${code}[]`;
-              }
+            const label = cb.closest(".form-check").querySelector(".form-check-label");
+            if (label) selectedTitles.push(label.textContent.trim());
+          }
+        });
 
-              container.appendChild(hidden);
-
-              const label = cb
-                .closest(".form-check")
-                .querySelector(".form-check-label");
-              if (label) {
-                selectedTitles.push(label.textContent.trim());
-              }
-            }
-          });
-
-        const summaryDiv = currentLi.querySelector(
-          "[data-role='authority-summary']"
-        );
-        summaryDiv.textContent = selectedTitles.length
-          ? selectedTitles.join(", ")
-          : "None selected";
+        const summaryDiv = currentLi.querySelector("[data-role='authority-summary']");
+        summaryDiv.textContent = selectedTitles.length ? selectedTitles.join(", ") : "None selected";
 
         authorityModal.hide();
+
+        scheduleScopesRebuild(); // scopes changed
       });
     }
 
     // ========================================
-    // "Add new Authority" inside the modal
-    // ========================================
-    const newAuthTitleInput = document.getElementById("newAuthorityTitle");
-    const newAuthAddressInput = document.getElementById("newAuthorityAddress");
-    const newAuthStatus = document.getElementById("newAuthorityStatus");
-    const btnAddAuthority = document.getElementById("btnAddAuthority");
-
-    if (btnAddAuthority) {
-      btnAddAuthority.addEventListener("click", function () {
-        if (!currentLi) {
-          newAuthStatus.textContent = "No location selected.";
-          newAuthStatus.className = "small text-danger";
-          return;
-        }
-
-        const code = currentLi.dataset.code;
-        const title = (newAuthTitleInput.value || "").trim();
-        const address = (newAuthAddressInput.value || "").trim();
-
-        if (!title) {
-          newAuthStatus.textContent = "Please enter a designation.";
-          newAuthStatus.className = "small text-danger";
-          return;
-        }
-
-        newAuthStatus.textContent = "Saving...";
-        newAuthStatus.className = "small text-muted";
-        btnAddAuthority.disabled = true;
-
-        const csrfToken =
-          window.CSRF_TOKEN ||
-          (document.querySelector('meta[name="csrf-token"]')
-            ? document
-                .querySelector('meta[name="csrf-token"]')
-                .getAttribute("content")
-            : null);
-
-        fetch(window.FLASK_QUICK_ADD_AUTHORITY_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(csrfToken
-              ? {
-                  "X-CSRFToken": csrfToken,
-                  "X-CSRF-Token": csrfToken,
-                }
-              : {}),
-          },
-          body: JSON.stringify({
-            location_code: code,
-            title: title,
-            address: address,
-          }),
-        })
-          .then(async (resp) => {
-            let data = null;
-            try {
-              data = await resp.json();
-            } catch (e) {
-              // non-JSON response (e.g., HTML error page)
-            }
-
-            if (!resp.ok || !data || data.success === false) {
-              const msg =
-                data && data.error
-                  ? data.error
-                  : `Server error (${resp.status}) while saving authority.`;
-              throw new Error(msg);
-            }
-
-            return data;
-          })
-          .then((data) => {
-            const auth = data.authority;
-
-            newAuthStatus.textContent = "Authority added.";
-            newAuthStatus.className = "small text-success";
-
-            // Clear inputs
-            newAuthTitleInput.value = "";
-            newAuthAddressInput.value = "";
-
-            // Update in-memory map so future openings see it
-            if (!BOOKING_AUTH_BY_CODE[code]) {
-              BOOKING_AUTH_BY_CODE[code] = [];
-            }
-            BOOKING_AUTH_BY_CODE[code].push({
-              id: auth.id,
-              title: auth.title,
-            });
-
-            // Add a new checkbox row to the current list and check it
-            const listDiv = document.getElementById("authorityPickerList");
-            const emptyDiv = document.getElementById("authorityPickerEmpty");
-            if (emptyDiv) {
-              emptyDiv.classList.add("d-none");
-            }
-
-            const checkWrapper = document.createElement("div");
-            checkWrapper.className = "form-check";
-
-            const cb = document.createElement("input");
-            cb.type = "checkbox";
-            cb.className = "form-check-input";
-            cb.checked = true;
-            cb.dataset.authId = auth.id;
-            cb.id = `auth-${currentLi.dataset.side}-${code}-${auth.id}`;
-
-            const label = document.createElement("label");
-            label.className = "form-check-label ms-2";
-            label.setAttribute("for", cb.id);
-            label.textContent = auth.title;
-
-            checkWrapper.appendChild(cb);
-            checkWrapper.appendChild(label);
-            listDiv.appendChild(checkWrapper);
-          })
-          .catch((err) => {
-            newAuthStatus.textContent =
-              (err && err.message) || "Error talking to server.";
-            newAuthStatus.className = "small text-danger";
-          })
-          .finally(() => {
-            btnAddAuthority.disabled = false;
-          });
-      });
-    }
-
-    // ========================================
-    // Booking Details Modal (with materials)
+    // Booking Details Modal (with materials) - UPDATED for multi-scope
     // ========================================
     (function setupBookingDetailsModal() {
       const detailModalEl = document.getElementById("bookingDetailModal");
       if (!detailModalEl) return;
 
-      const materialsBody = document.getElementById(
-        "bookingDetailMaterialsBody"
-      );
-      const materialsSummaryEl = document.getElementById(
-        "bookingDetailMaterialsSummary"
-      );
+      const materialsBody = document.getElementById("bookingDetailMaterialsBody");
+      const materialsSummaryEl = document.getElementById("bookingDetailMaterialsSummary");
 
       function setText(id, value) {
         const el = document.getElementById(id);
-        if (el) {
-          el.textContent = value || "";
-        }
+        if (el) el.textContent = value || "";
       }
 
       function renderMaterialsPlaceholder(message) {
         if (!materialsBody) return;
         materialsBody.innerHTML =
-          '<tr class="text-muted"><td colspan="6">' +
-          message +
-          "</td></tr>";
-        if (materialsSummaryEl) {
+          '<tr class="text-muted"><td colspan="6">' + message + "</td></tr>";
+        if (materialsSummaryEl) materialsSummaryEl.textContent = "";
+      }
+
+      function td(text, align) {
+        const cell = document.createElement("td");
+        if (align) cell.classList.add("text-" + align);
+        cell.textContent = text === null || text === undefined ? "" : String(text);
+        return cell;
+      }
+
+      function renderLegacyMaterials(data) {
+        // Legacy shape: {success, has_materials, mode, header, lines}
+        if (!data || data.success === false || !data.has_materials) {
+          renderMaterialsPlaceholder("No material details available.");
+          return;
+        }
+
+        const lines = data.lines || [];
+        const mode = (data.mode || "").toUpperCase();
+        const header = data.header || {};
+
+        if (!lines.length) {
+          renderMaterialsPlaceholder("No material details available.");
+          return;
+        }
+
+        materialsBody.innerHTML = "";
+        lines.forEach((line, idx) => {
+          const tr = document.createElement("tr");
+          const sl = line.sequence_index || idx + 1;
+          tr.appendChild(td(sl, "center"));
+          tr.appendChild(td(line.description || "", null));
+          tr.appendChild(td(line.unit || "", "center"));
+          tr.appendChild(
+            td(line.quantity != null && line.quantity !== "" ? line.quantity : "", "end")
+          );
+          tr.appendChild(
+            td(line.rate != null && line.rate !== "" ? line.rate : "", "end")
+          );
+          tr.appendChild(
+            td(line.amount != null && line.amount !== "" ? line.amount : "", "end")
+          );
+          materialsBody.appendChild(tr);
+        });
+
+        if (!materialsSummaryEl) return;
+
+        const qtyHeader = header.total_quantity;
+        const unitHeader = header.total_quantity_unit;
+        const amtHeader = header.total_amount;
+
+        let anyLineQty = false;
+        lines.forEach((line) => {
+          const q = line.quantity;
+          if (
+            q !== null &&
+            q !== undefined &&
+            q !== "" &&
+            !isNaN(parseFloat(q)) &&
+            parseFloat(q) > 0
+          ) {
+            anyLineQty = true;
+          }
+        });
+
+        if (mode === "ITEM") {
+          materialsSummaryEl.textContent =
+            amtHeader != null && amtHeader !== ""
+              ? "Item-wise materials. Total amount: ₹ " + amtHeader
+              : "Item-wise materials.";
+        } else if (mode === "LUMPSUM") {
+          let parts = ["Lumpsum materials"];
+          if (!anyLineQty) {
+            if (qtyHeader != null && qtyHeader !== "") {
+              parts.push(
+                "Total quantity: " + qtyHeader + (unitHeader ? " " + unitHeader : "")
+              );
+            } else if (unitHeader) {
+              parts.push("Unit: " + unitHeader);
+            }
+          }
+          if (amtHeader != null && amtHeader !== "") parts.push("Total amount: ₹ " + amtHeader);
+          materialsSummaryEl.textContent = parts.join(" · ");
+        } else if (mode === "ATTACHED") {
+          materialsSummaryEl.textContent =
+            amtHeader != null && amtHeader !== ""
+              ? "Attached materials. Total amount: ₹ " + amtHeader
+              : "Attached materials.";
+        } else {
           materialsSummaryEl.textContent = "";
         }
       }
 
-      // Delegated click handler for any Details button in any tab
+      function isMultiScopePayload(data) {
+        // Multi-scope shape: {success, booking_id, booking_level, loading, unloading, from_to}
+        return (
+          data &&
+          data.success !== false &&
+          (Array.isArray(data.from_to) ||
+            Array.isArray(data.loading) ||
+            Array.isArray(data.unloading) ||
+            Array.isArray(data.booking_level))
+        );
+      }
+
+      function renderMultiScopeMaterials(data) {
+        const fromTo = Array.isArray(data.from_to) ? data.from_to : [];
+        const bookingLevel = Array.isArray(data.booking_level) ? data.booking_level : [];
+
+        // Prefer from_to for a clean “scope” view; if empty, fall back to booking_level
+        const scopes = fromTo.length ? fromTo : bookingLevel;
+
+        if (!scopes.length) {
+          renderMaterialsPlaceholder("No material details available.");
+          return;
+        }
+
+        materialsBody.innerHTML = "";
+
+        let scopeCount = 0;
+
+        scopes.forEach((scope) => {
+          scopeCount += 1;
+
+          const mode = (scope.mode || "").toUpperCase();
+          const header = scope.header || {};
+          const lines = scope.lines || [];
+
+          const fromTitle =
+            scope.from_authority?.title ||
+            scope.authority?.title ||
+            scope.from_authority?.authority_title ||
+            "Loading";
+          const toTitle =
+            scope.to_authority?.title ||
+            scope.to_authority?.authority_title ||
+            "Unloading";
+
+          // Scope header row (colspan)
+          const trHead = document.createElement("tr");
+          trHead.classList.add("table-light");
+          const headCell = document.createElement("td");
+          headCell.colSpan = 6;
+
+          const qtyHeader = header.total_quantity;
+          const unitHeader = header.total_quantity_unit;
+          const amtHeader = header.total_amount;
+
+          const parts = [];
+          if (mode) parts.push(mode);
+          if (mode === "LUMPSUM" && qtyHeader != null && qtyHeader !== "") {
+            parts.push("Qty: " + qtyHeader + (unitHeader ? " " + unitHeader : ""));
+          }
+          if (amtHeader != null && amtHeader !== "") parts.push("Amt: ₹ " + amtHeader);
+
+          headCell.innerHTML =
+            `<strong>Scope ${scopeCount}:</strong> ` +
+            `${fromTitle} <span class="text-muted">→</span> ${toTitle}` +
+            (parts.length ? ` <span class="text-muted">·</span> <span class="text-muted">${parts.join(" · ")}</span>` : "");
+
+          trHead.appendChild(headCell);
+          materialsBody.appendChild(trHead);
+
+          // Lines
+          if (!lines.length) {
+            const trEmpty = document.createElement("tr");
+            trEmpty.appendChild(td("", "center"));
+            trEmpty.appendChild(td("(No lines)", null));
+            trEmpty.appendChild(td("", "center"));
+            trEmpty.appendChild(td("", "end"));
+            trEmpty.appendChild(td("", "end"));
+            trEmpty.appendChild(td("", "end"));
+            materialsBody.appendChild(trEmpty);
+            return;
+          }
+
+          lines.forEach((line, idx) => {
+            const tr = document.createElement("tr");
+            const sl = line.sequence_index || idx + 1;
+
+            tr.appendChild(td(sl, "center"));
+            tr.appendChild(td(line.description || "", null));
+            tr.appendChild(td(line.unit || "", "center"));
+            tr.appendChild(td(line.quantity != null && line.quantity !== "" ? line.quantity : "", "end"));
+            tr.appendChild(td(line.rate != null && line.rate !== "" ? line.rate : "", "end"));
+            tr.appendChild(td(line.amount != null && line.amount !== "" ? line.amount : "", "end"));
+
+            materialsBody.appendChild(tr);
+          });
+        });
+
+        if (!materialsSummaryEl) return;
+        materialsSummaryEl.textContent = `Materials loaded for ${scopeCount} scope(s).`;
+      }
+
       document.addEventListener("click", function (event) {
-        // Be lenient: any element with data-booking-id is treated as a trigger
         const button = event.target.closest("[data-booking-id]");
         if (!button) return;
 
         const ds = button.dataset;
 
-        // Header fields
         setText("bookingDetailTripSerial", ds.tripSerial);
         setText("bookingDetailBookingId", ds.bookingId);
         setText("bookingDetailBookingDate", ds.bookingDate);
@@ -746,17 +639,11 @@ if (window.__BOOKING_JS_INITED__) {
         setText("bookingDetailRoute", ds.route);
         setText("bookingDetailTripKm", ds.tripKm);
 
-        // Always show modal immediately (with a loading placeholder in materials)
-        if (materialsBody) {
-          renderMaterialsPlaceholder("Loading materials…");
-        }
+        renderMaterialsPlaceholder("Loading materials…");
         const modalInstance = bootstrap.Modal.getOrCreateInstance(detailModalEl);
         modalInstance.show();
 
-        // Materials: load via JSON
-        if (!materialsBody || !MATERIALS_URL_TEMPLATE) {
-          return;
-        }
+        if (!materialsBody || !MATERIALS_URL_TEMPLATE) return;
 
         const bookingId = ds.bookingId;
         if (!bookingId) {
@@ -766,848 +653,664 @@ if (window.__BOOKING_JS_INITED__) {
 
         const url = MATERIALS_URL_TEMPLATE.replace("__ID__", bookingId);
 
-        fetch(url, {
-          headers: {
-            Accept: "application/json",
-          },
-        })
+        fetch(url, { headers: { Accept: "application/json" } })
           .then((resp) => {
-            if (!resp.ok) {
-              throw new Error("Server error " + resp.status);
-            }
+            if (!resp.ok) throw new Error("Server error " + resp.status);
             return resp.json();
           })
           .then((data) => {
-            if (!data || data.success === false || !data.has_materials) {
-              renderMaterialsPlaceholder("No material details available.");
+            // Multi-scope?
+            if (isMultiScopePayload(data)) {
+              renderMultiScopeMaterials(data);
               return;
             }
-
-            const lines = data.lines || [];
-            const mode = (data.mode || "").toUpperCase();
-            const header = data.header || {};
-
-            if (!lines.length) {
-              renderMaterialsPlaceholder("No material details available.");
-            } else {
-              materialsBody.innerHTML = "";
-
-              lines.forEach((line, idx) => {
-                const tr = document.createElement("tr");
-
-                function td(text, align) {
-                  const cell = document.createElement("td");
-                  if (align) cell.classList.add("text-" + align);
-                  cell.textContent =
-                    text === null || text === undefined ? "" : String(text);
-                  return cell;
-                }
-
-                const sl = line.sequence_index || idx + 1;
-                tr.appendChild(td(sl, "center"));
-                tr.appendChild(td(line.description || "", null));
-                tr.appendChild(td(line.unit || "", "center"));
-                tr.appendChild(
-                  td(
-                    line.quantity != null && line.quantity !== ""
-                      ? line.quantity
-                      : "",
-                    "end"
-                  )
-                );
-                tr.appendChild(
-                  td(
-                    line.rate != null && line.rate !== "" ? line.rate : "",
-                    "end"
-                  )
-                );
-                tr.appendChild(
-                  td(
-                    line.amount != null && line.amount !== ""
-                      ? line.amount
-                      : "",
-                    "end"
-                  )
-                );
-
-                materialsBody.appendChild(tr);
-              });
-            }
-
-            // -------- Mode-aware summary ----------
-            if (!materialsSummaryEl) return;
-
-            const qtyHeader = header.total_quantity;
-            const unitHeader = header.total_quantity_unit;
-            const amtHeader = header.total_amount;
-
-            // Detect if any line has quantity (for LUMPSUM logic)
-            let anyLineQty = false;
-            lines.forEach((line) => {
-              const q = line.quantity;
-              if (
-                q !== null &&
-                q !== undefined &&
-                q !== "" &&
-                !isNaN(parseFloat(q)) &&
-                parseFloat(q) > 0
-              ) {
-                anyLineQty = true;
-              }
-            });
-
-            if (mode === "ITEM") {
-              // For ITEM mode, header total qty/unit are not meaningful; focus on amount.
-              if (amtHeader != null && amtHeader !== "") {
-                materialsSummaryEl.textContent =
-                  "Item-wise materials. Total amount: ₹ " + amtHeader;
-              } else {
-                materialsSummaryEl.textContent = "Item-wise materials.";
-              }
-            } else if (mode === "LUMPSUM") {
-              let parts = ["Lumpsum materials"];
-
-              if (!anyLineQty) {
-                // No per-line qty: use header total qty/unit if present
-                if (qtyHeader != null && qtyHeader !== "") {
-                  parts.push(
-                    "Total quantity: " +
-                      qtyHeader +
-                      (unitHeader ? " " + unitHeader : "")
-                  );
-                } else if (unitHeader) {
-                  parts.push("Unit: " + unitHeader);
-                }
-              } // else: lines carry quantity; don't repeat header total qty
-
-              if (amtHeader != null && amtHeader !== "") {
-                parts.push("Total amount: ₹ " + amtHeader);
-              }
-
-              materialsSummaryEl.textContent = parts.join(" · ");
-            } else {
-              // No mode info
-              materialsSummaryEl.textContent = "";
-            }
+            // Fallback legacy
+            renderLegacyMaterials(data);
           })
           .catch(() => {
-            renderMaterialsPlaceholder(
-              "Error loading material details from server."
-            );
+            renderMaterialsPlaceholder("Error loading material details from server.");
           });
       });
     })();
 
-  // ========================================
-  // Materials scopes (Hard Reset - Option A)
-  // ========================================
-  (function setupMaterialsScopesOptionA() {
-    const accordion = document.getElementById("materialsScopesAccordion");
-    const scopesJsonInput = document.getElementById("computedScopesJSON");
-    const errorEl = document.getElementById("materialsScopesError");
+    // ========================================
+    // Multi-scope Materials UI (corrected)
+    // ========================================
+    (function setupMaterialsScopesMultiUI() {
+      const accordion = document.getElementById("materialsScopesAccordion");
+      const scopesJsonInput = document.getElementById("materialsScopesJSON");
+      const errorEl = document.getElementById("materialsScopesError");
+      const emptyHintEl = document.getElementById("materialsScopesEmptyHint");
+      const saveBtn = document.getElementById("btnSaveBooking");
 
-    if (!accordion || !scopesJsonInput) return;
+      if (!accordion || !scopesJsonInput) return;
 
-    // ---- helpers ----
-    function q(sel, root) {
-      return (root || document).querySelector(sel);
-    }
-    function qa(sel, root) {
-      return Array.from((root || document).querySelectorAll(sel));
-    }
-    function esc(s) {
-      return String(s || "").replace(/[&<>"']/g, (c) => ({
-        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-      }[c]));
-    }
-
-    // Read selected authority IDs from the existing LI structure
-    function getSelectedAuthorities(side) {
-      const listId = side === "LOADING" ? "fromBookingLocationList" : "destBookingLocationList";
-      const list = document.getElementById(listId);
-      if (!list) return [];
-
-      const items = qa("li[data-code]", list);
-      const out = [];
-
-      items.forEach((li) => {
-        const code = (li.dataset.code || "").toUpperCase();
-        const container = q("[data-role='selected-authorities']", li);
-        const ids = container
-          ? qa("input[type='hidden']", container).map((h) => String(h.value))
-          : [];
-
-        ids.forEach((id) => {
-          out.push({ location_code: code, authority_id: id });
-        });
-      });
-
-      return out;
-    }
-
-    // For now (Option A), backend does NOT use computed_scopes_json.
-    // But we still fill it with a helpful structure for the next phase.
-    function computeAuthorityPairScopes() {
-      const loading = getSelectedAuthorities("LOADING");
-      const unloading = getSelectedAuthorities("UNLOADING");
-
-      const scopes = [];
-      loading.forEach((l) => {
-        unloading.forEach((u) => {
-          scopes.push({
-            from: { location_code: l.location_code, authority_id: l.authority_id },
-            to: { location_code: u.location_code, authority_id: u.authority_id }
-          });
-        });
-      });
-
-      return scopes;
-    }
-
-    function setScopesJson() {
-      const scopes = computeAuthorityPairScopes();
-      scopesJsonInput.value = JSON.stringify({
-        mode: "AUTHORITY_PAIR",
-        scopes: scopes
-      });
-    }
-
-    // ---- UI: one base material table (legacy field names) ----
-    function renderBaseMaterialsAccordion() {
-      accordion.innerHTML = `
-        <div class="accordion-item">
-          <h2 class="accordion-header" id="matBaseHead">
-            <button class="accordion-button" type="button" data-bs-toggle="collapse"
-                    data-bs-target="#matBaseBody" aria-expanded="true" aria-controls="matBaseBody">
-              Base Materials (applied to all scopes)
-            </button>
-          </h2>
-          <div id="matBaseBody" class="accordion-collapse collapse show" aria-labelledby="matBaseHead">
-            <div class="accordion-body">
-
-              <div class="row g-2 align-items-end mb-3">
-                <div class="col-md-3">
-                  <label class="form-label form-label-sm mb-1">Mode</label>
-                  <select class="form-select form-select-sm" name="material_mode" id="material_mode_A" required>
-                    <option value="">-- Select --</option>
-                    <option value="ITEM">ITEM</option>
-                    <option value="LUMPSUM">LUMPSUM</option>
-                  </select>
-                </div>
-
-                <div class="col-md-3" id="materialTotalQtyGroup_A" style="display:none;">
-                  <label class="form-label form-label-sm mb-1">Total Quantity (LUMPSUM)</label>
-                  <input type="number" step="0.01" min="0" class="form-control form-control-sm"
-                        name="material_total_quantity" id="material_total_quantity_A">
-                </div>
-
-                <div class="col-md-2" id="materialTotalQtyUnitGroup_A" style="display:none;">
-                  <label class="form-label form-label-sm mb-1">Unit</label>
-                  <input type="text" class="form-control form-control-sm"
-                        name="material_total_quantity_unit" id="material_total_quantity_unit_A">
-                </div>
-
-                <div class="col-md-4">
-                  <label class="form-label form-label-sm mb-1">Total Amount</label>
-                  <input type="number" step="0.01" min="0" class="form-control form-control-sm"
-                        name="material_total_amount" id="material_total_amount_A">
-                </div>
-              </div>
-
-              <div class="table-responsive">
-                <table class="table table-sm table-bordered align-middle mb-2">
-                  <thead class="table-light">
-                    <tr>
-                      <th style="width:5%;">#</th>
-                      <th>Description</th>
-                      <th style="width:12%;" data-col="unit">Unit</th>
-                      <th style="width:12%;" data-col="qty">Qty</th>
-                      <th style="width:12%;" data-col="rate">Rate</th>
-                      <th style="width:12%;" data-col="amt">Amount</th>
-                      <th style="width:6%;"></th>
-                    </tr>
-                  </thead>
-                  <tbody id="materialLinesBody_A"></tbody>
-                </table>
-              </div>
-
-              <div class="d-flex justify-content-between align-items-center">
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="btnAddMaterialRow_A">
-                  + Add row
-                </button>
-                <button type="submit" class="btn btn-sm btn-primary">
-                  Save Booking
-                </button>
-              </div>
-
-              <div class="small text-muted mt-2">
-                Option A hard reset: This table posts legacy field names, so backend works unchanged.
-              </div>
-
-            </div>
-          </div>
-        </div>
-      `;
-    }
-
-    function renumberRows(tbody) {
-      qa("tr", tbody).forEach((tr, idx) => {
-        const cell = q("[data-role='sl']", tr);
-        if (cell) cell.textContent = String(idx + 1);
-      });
-    }
-
-    function createRow() {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td class="text-center" data-role="sl"></td>
-        <td>
-          <input type="text" class="form-control form-control-sm"
-                name="material_line_description[]" placeholder="Description">
-        </td>
-        <td data-col="unit">
-          <input type="text" class="form-control form-control-sm"
-                name="material_line_unit[]" placeholder="Unit">
-        </td>
-        <td data-col="qty">
-          <input type="number" step="0.01" min="0" class="form-control form-control-sm"
-                name="material_line_quantity[]" placeholder="Qty">
-        </td>
-        <td data-col="rate">
-          <input type="number" step="0.01" min="0" class="form-control form-control-sm"
-                name="material_line_rate[]" placeholder="Rate">
-        </td>
-        <td data-col="amt">
-          <input type="number" step="0.01" min="0" class="form-control form-control-sm"
-                name="material_line_amount[]" placeholder="Amount">
-        </td>
-        <td class="text-center">
-          <button type="button" class="btn btn-sm btn-outline-danger" data-role="rm">×</button>
-        </td>
-      `;
-      return tr;
-    }
-
-    function applyModeVisibility(mode, root) {
-      const showLumpsumHeader = mode === "LUMPSUM";
-      const qtyGroup = document.getElementById("materialTotalQtyGroup_A");
-      const unitGroup = document.getElementById("materialTotalQtyUnitGroup_A");
-      if (qtyGroup) qtyGroup.style.display = showLumpsumHeader ? "" : "none";
-      if (unitGroup) unitGroup.style.display = showLumpsumHeader ? "" : "none";
-
-      // Table columns
-      const showRateAmt = mode === "ITEM";
-      const showQtyUnit = mode === "ITEM" || mode === "LUMPSUM";
-
-      qa("[data-col='unit']", root).forEach((el) => el.style.display = showQtyUnit ? "" : "none");
-      qa("[data-col='qty']", root).forEach((el) => el.style.display = showQtyUnit ? "" : "none");
-      qa("[data-col='rate']", root).forEach((el) => el.style.display = showRateAmt ? "" : "none");
-      qa("[data-col='amt']", root).forEach((el) => el.style.display = showRateAmt ? "" : "none");
-    }
-
-    function wireBaseMaterials() {
-      const modeSel = document.getElementById("material_mode_A");
-      const tbody = document.getElementById("materialLinesBody_A");
-      const addBtn = document.getElementById("btnAddMaterialRow_A");
-
-      if (!modeSel || !tbody || !addBtn) return;
-
-      // start with one row
-      tbody.appendChild(createRow());
-      renumberRows(tbody);
-      applyModeVisibility("", accordion);
-
-      addBtn.addEventListener("click", () => {
-        tbody.appendChild(createRow());
-        renumberRows(tbody);
-        applyModeVisibility(modeSel.value, accordion);
-        setScopesJson();
-      });
-
-      tbody.addEventListener("click", (e) => {
-        const rm = e.target.closest("[data-role='rm']");
-        if (!rm) return;
-        const tr = rm.closest("tr");
-        if (tr) tr.remove();
-        if (!tbody.querySelector("tr")) tbody.appendChild(createRow());
-        renumberRows(tbody);
-        setScopesJson();
-      });
-
-      modeSel.addEventListener("change", () => {
-        applyModeVisibility(modeSel.value, accordion);
-        setScopesJson();
-      });
-
-      // Keep scopes JSON updated whenever authorities may have changed
-      document.addEventListener("click", (e) => {
-        if (
-          e.target.matches("#applyAuthoritySelection") ||
-          e.target.closest("button[data-role='from-booking-add']") ||
-          e.target.closest("button[data-role='dest-booking-add']") ||
-          e.target.closest("button.btn-link.text-danger")
-        ) {
-          setTimeout(setScopesJson, 50);
-        }
-      });
-
-      // On submit: ensure JSON is present (even if empty)
-      const form = accordion.closest("form");
-      if (form) {
-        form.addEventListener("submit", () => {
-          setScopesJson();
-          if (errorEl) errorEl.classList.add("d-none");
-        });
+      function q(sel, root) {
+        return (root || document).querySelector(sel);
+      }
+      function qa(sel, root) {
+        return Array.from((root || document).querySelectorAll(sel));
+      }
+      function esc(s) {
+        return String(s || "").replace(/[&<>"']/g, (c) => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        }[c]));
       }
 
-      // initial set
-      setScopesJson();
-    }
-
-    renderBaseMaterialsAccordion();
-    wireBaseMaterials();
-  })();
-
-
-    // ========================================
-    // Booking detail page: materials editor
-    // ========================================
-    (function setupBookingDetailMaterials() {
-      const modeSelect = document.getElementById("materialModeDetail");
-      const tbody = document.getElementById("materialLinesBodyDetail");
-      const btnAddRow = document.getElementById("btnAddMaterialRowDetail");
-      const totalQtyGroup = document.getElementById(
-        "materialTotalQtyGroupDetail"
-      );
-
-      // Only run on booking_detail.html
-      if (!modeSelect || !tbody || !btnAddRow) {
-        return;
+      function setEmptyHintVisible(isVisible) {
+        if (!emptyHintEl) return;
+        emptyHintEl.classList.toggle("d-none", !isVisible);
       }
 
-      const totalQtyInput = document.querySelector(
-        "input[name='material_total_quantity']"
-      );
-      const totalUnitInput = document.querySelector(
-        "input[name='material_total_quantity_unit']"
-      );
-      const totalAmountInput = document.querySelector(
-        "input[name='material_total_amount']"
-      );
+      function setSaveEnabled(isEnabled) {
+        if (!saveBtn) return;
+        saveBtn.disabled = !isEnabled;
+      }
 
-      function parseFloatSafe(v) {
-        if (v === null || v === undefined) return null;
-        v = String(v).trim();
-        if (!v) return null;
-        const n = Number(v);
+      function parseNum(v) {
+        if (v == null) return null;
+        const s = String(v).trim();
+        if (!s) return null;
+        const n = Number(s);
         return Number.isFinite(n) ? n : null;
       }
 
-      function renumberRows() {
-        const rows = tbody.querySelectorAll("tr");
-        rows.forEach(function (row, index) {
-          const slCell = row.querySelector(".seq-cell");
-          if (slCell) {
-            slCell.textContent = index + 1;
-          }
-        });
-      }
+      function getSelectedAuthorities(side) {
+        const listId = side === "LOADING" ? "fromBookingLocationList" : "destBookingLocationList";
+        const list = document.getElementById(listId);
+        if (!list) return [];
 
-      function createRow() {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td class="text-center seq-cell"></td>
-          <td>
-            <input type="hidden" name="line_id[]" value="">
-            <input
-              type="text"
-              name="line_description[]"
-              class="form-control form-control-sm"
-              required
-            >
-          </td>
-          <td>
-            <input
-              type="text"
-              name="line_unit[]"
-              class="form-control form-control-sm material-unit"
-            >
-          </td>
-          <td>
-            <input
-              type="number"
-              name="line_quantity[]"
-              class="form-control form-control-sm material-qty"
-              step="0.001"
-              min="0"
-            >
-          </td>
-          <td>
-            <input
-              type="number"
-              name="line_rate[]"
-              class="form-control form-control-sm material-rate"
-              step="0.01"
-              min="0"
-            >
-          </td>
-          <td>
-            <input
-              type="number"
-              name="line_amount[]"
-              class="form-control form-control-sm material-amount"
-              step="0.01"
-              min="0"
-            >
-          </td>
-          <td class="text-center">
-            <button
-              type="button"
-              class="btn btn-sm btn-outline-danger"
-              data-role="remove-material-line-detail"
-            >
-              ×
-            </button>
-          </td>
-        `;
-        return tr;
-      }
+        const items = qa("li[data-code]", list);
+        const out = [];
 
-      function addRow() {
-        const row = createRow();
-        tbody.appendChild(row);
-        renumberRows();
-        applyModeVisibility();
-        updateLumpsumTotalQtyEnableState();
-      }
-
-      // ITEM mode → header totals derived from rows
-      function recalcHeaderTotals() {
-        const mode = modeSelect.value;
-        if (mode !== "ITEM") return;
-
-        let totalQty = 0;
-        let totalAmt = 0;
-
-        tbody.querySelectorAll("tr").forEach(function (row) {
-          const qtyInput = row.querySelector(".material-qty");
-          const amtInput = row.querySelector(".material-amount");
-
-          const q = qtyInput ? parseFloatSafe(qtyInput.value) : null;
-          const a = amtInput ? parseFloatSafe(amtInput.value) : null;
-
-          if (q !== null) totalQty += q;
-          if (a !== null) totalAmt += a;
+        items.forEach((li) => {
+          const code = (li.dataset.code || "").toUpperCase();
+          const container = q("[data-role='selected-authorities']", li);
+          const ids = container ? qa("input[type='hidden']", container).map((h) => String(h.value)) : [];
+          ids.forEach((id) => out.push({ location_code: code, authority_id: id }));
         });
 
-        if (totalQtyInput) {
-          totalQtyInput.value = totalQty > 0 ? totalQty.toFixed(3) : "";
-        }
-        if (totalAmountInput) {
-          totalAmountInput.value = totalAmt > 0 ? totalAmt.toFixed(2) : "";
-        }
+        return out;
       }
 
-      // LUMPSUM behaviour:
-      // - If any row has Qty → disable header total qty/unit.
-      // - Else if header total qty has value → disable all row qty and clear them.
-      // - Else → both header and row quantities enabled.
-      function updateLumpsumTotalQtyEnableState() {
-        const mode = modeSelect.value;
-        if (mode !== "LUMPSUM") return;
-        if (!totalQtyInput || !totalUnitInput) return;
+      function computeAuthorityPairScopes() {
+        const loading = getSelectedAuthorities("LOADING");
+        const unloading = getSelectedAuthorities("UNLOADING");
 
-        let anyRowQty = false;
-        tbody.querySelectorAll(".material-qty").forEach(function (input) {
-          const v = parseFloatSafe(input.value);
-          if (v !== null && v !== 0) {
-            anyRowQty = true;
-          }
-        });
-
-        const headerQty = parseFloatSafe(totalQtyInput.value);
-        const headerHasQty = headerQty !== null && headerQty !== 0;
-
-        if (anyRowQty) {
-          // Row-level quantities take priority → lock header
-          totalQtyInput.disabled = true;
-          totalUnitInput.disabled = true;
-        } else if (headerHasQty) {
-          // Header total quantity in use → lock row quantities and clear them
-          totalQtyInput.disabled = false;
-          totalUnitInput.disabled = false;
-          tbody.querySelectorAll(".material-qty").forEach(function (input) {
-            input.value = "";
-            input.disabled = true;
+        const scopes = [];
+        loading.forEach((l) => {
+          unloading.forEach((u) => {
+            scopes.push({
+              from: { location_code: l.location_code, authority_id: l.authority_id },
+              to: { location_code: u.location_code, authority_id: u.authority_id },
+              material: null,
+            });
           });
-        } else {
-          // Nothing filled → allow both header and row quantities
-          totalQtyInput.disabled = false;
-          totalUnitInput.disabled = false;
-          tbody.querySelectorAll(".material-qty").forEach(function (input) {
-            input.disabled = false;
-          });
-        }
+        });
+        return scopes;
       }
 
-      function applyModeVisibility() {
-        const mode = modeSelect.value;
+      function findAuthorityTitle(locationCode, authorityId) {
+        const list = BOOKING_AUTH_BY_CODE[(locationCode || "").toUpperCase()] || [];
+        const idNum = Number(authorityId);
+        const match = list.find((a) => Number(a.id) === idNum);
+        return match ? match.title : `Authority #${authorityId}`;
+      }
 
-        const unitInputs = tbody.querySelectorAll(".material-unit");
-        const qtyInputs = tbody.querySelectorAll(".material-qty");
-        const rateInputs = tbody.querySelectorAll(".material-rate");
-        const amountInputs = tbody.querySelectorAll(".material-amount");
+      function scopeHeaderText(scope) {
+        const fCode = (scope.from.location_code || "").toUpperCase();
+        const tCode = (scope.to.location_code || "").toUpperCase();
+        const fTitle = findAuthorityTitle(fCode, scope.from.authority_id);
+        const tTitle = findAuthorityTitle(tCode, scope.to.authority_id);
+        return `${fCode} (${fTitle}) \u2192 ${tCode} (${tTitle})`;
+      }
 
-        const unitCells = [];
-        const qtyCells = [];
-        const rateCells = [];
-        const amountCells = [];
+      function setScopesJson(scopes) {
+        scopesJsonInput.value = JSON.stringify({
+          mode: "AUTHORITY_PAIR",
+          scopes: scopes,
+        });
+      }
 
-        unitInputs.forEach(function (inp) {
-          const td = inp.closest("td");
-          if (td) unitCells.push(td);
-        });
-        qtyInputs.forEach(function (inp) {
-          const td = inp.closest("td");
-          if (td) qtyCells.push(td);
-        });
-        rateInputs.forEach(function (inp) {
-          const td = inp.closest("td");
-          if (td) rateCells.push(td);
-        });
-        amountInputs.forEach(function (inp) {
-          const td = inp.closest("td");
-          if (td) amountCells.push(td);
-        });
+      // ---- Validation rules ----
+      function validateMaterialBlock(block) {
+        if (!block) return { ok: false, msg: "Material block missing." };
+
+        const mode = (block.mode || "").toUpperCase();
+        if (!["ITEM", "LUMPSUM", "ATTACHED"].includes(mode)) {
+          return { ok: false, msg: "Select a material mode." };
+        }
+
+        const lines = Array.isArray(block.lines) ? block.lines : [];
+
+        if (mode === "ATTACHED") {
+          const amt = parseNum(block.total_amount);
+          if (amt == null) return { ok: false, msg: "ATTACHED: Total Amount is required." };
+          return { ok: true };
+        }
 
         if (mode === "ITEM") {
-          // ITEM mode:
-          // - All row columns visible and editable
-          // - Header total qty/unit hidden & disabled
-          unitCells.forEach((td) => td.classList.remove("d-none"));
-          qtyCells.forEach((td) => td.classList.remove("d-none"));
-          rateCells.forEach((td) => td.classList.remove("d-none"));
-          amountCells.forEach((td) => td.classList.remove("d-none"));
+          const hasComputed = lines.some((ln) => parseNum(ln.amount) != null);
+          if (!hasComputed) return { ok: false, msg: "ITEM: add at least one row with Qty + Rate." };
+          return { ok: true };
+        }
 
-          unitInputs.forEach((i) => i.removeAttribute("disabled"));
-          qtyInputs.forEach((i) => i.removeAttribute("disabled"));
-          rateInputs.forEach((i) => i.removeAttribute("disabled"));
-          amountInputs.forEach((i) => i.removeAttribute("disabled"));
+        // LUMPSUM
+        const headerQty = parseNum(block.total_quantity);
+        const anyLineQty = lines.some((ln) => parseNum(ln.quantity) != null && parseNum(ln.quantity) !== 0);
+        if (headerQty != null && anyLineQty) {
+          return { ok: false, msg: "LUMPSUM: use either header quantity OR line quantities, not both." };
+        }
 
-          if (totalQtyGroup) totalQtyGroup.classList.add("d-none");
-          if (totalQtyInput) {
-            totalQtyInput.disabled = true;
-            totalQtyInput.value = "";
-          }
-          if (totalUnitInput) {
-            totalUnitInput.disabled = true;
-            totalUnitInput.value = "";
-          }
-          if (totalAmountInput) {
-            totalAmountInput.disabled = true;
-            totalAmountInput.value = "";
-          }
-        } else if (mode === "LUMPSUM") {
-          // LUMPSUM mode:
-          // - Show Unit + Qty
-          // - Hide Rate + Amount (and disable them)
-          // - Header total qty/unit visible
-          unitCells.forEach((td) => td.classList.remove("d-none"));
-          qtyCells.forEach((td) => td.classList.remove("d-none"));
-          rateCells.forEach((td) => td.classList.add("d-none"));
-          amountCells.forEach((td) => td.classList.add("d-none"));
+        const hasSomething =
+          headerQty != null ||
+          parseNum(block.total_amount) != null ||
+          String(block.total_quantity_unit || "").trim().length > 0 ||
+          lines.some((ln) => String(ln.description || "").trim().length > 0);
 
-          unitInputs.forEach((i) => {
-            i.removeAttribute("disabled");
+        if (!hasSomething) {
+          return { ok: false, msg: "LUMPSUM: enter header Qty/Amount (or) at least one line." };
+        }
+
+        return { ok: true };
+      }
+
+      function computeValidity(scopesWithBlocks) {
+        if (!Array.isArray(scopesWithBlocks) || scopesWithBlocks.length === 0) {
+          return { ok: false, msg: "Please add at least one FROM → TO authority scope." };
+        }
+        for (let i = 0; i < scopesWithBlocks.length; i++) {
+          const v = validateMaterialBlock(scopesWithBlocks[i].material);
+          if (!v.ok) return { ok: false, msg: `Scope #${i + 1}: ${v.msg}` };
+        }
+        return { ok: true };
+      }
+
+      // ---------- Materials table builder ----------
+      function createMaterialsTableDOM(scopeIndex, onAnyChange) {
+        const uid = `S${scopeIndex}`;
+
+        const wrap = document.createElement("div");
+        wrap.dataset.role = "scope-material-root";
+        wrap.dataset.scopeIndex = String(scopeIndex);
+
+        wrap.innerHTML = `
+          <div class="row g-2 align-items-end mb-2">
+            <div class="col-md-3">
+              <label class="form-label form-label-sm mb-1">Mode</label>
+              <select class="form-select form-select-sm" id="material_mode_${uid}">
+                <option value="">-- Select --</option>
+                <option value="ITEM">ITEM</option>
+                <option value="LUMPSUM">LUMPSUM</option>
+                <option value="ATTACHED">ATTACHED</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered align-middle mb-2">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:5%;">#</th>
+                  <th>Description</th>
+                  <th style="width:12%;" data-col="unit">Unit</th>
+                  <th style="width:12%;" data-col="qty">Qty</th>
+                  <th style="width:12%;" data-col="rate">Rate</th>
+                  <th style="width:12%;" data-col="amt">Amount</th>
+                  <th style="width:6%;" data-col="rm"></th>
+                </tr>
+              </thead>
+              <tbody id="materialLinesBody_${uid}"></tbody>
+            </table>
+          </div>
+
+          <div class="row g-2 align-items-end mt-2">
+            <div class="col-md-3" id="materialTotalQtyGroup_${uid}" style="display:none;">
+              <label class="form-label form-label-sm mb-1">Total Quantity</label>
+              <input type="number" step="0.01" min="0" class="form-control form-control-sm"
+                id="material_total_quantity_${uid}">
+            </div>
+
+            <div class="col-md-2" id="materialTotalQtyUnitGroup_${uid}" style="display:none;">
+              <label class="form-label form-label-sm mb-1">Unit</label>
+              <input type="text" class="form-control form-control-sm"
+                id="material_total_quantity_unit_${uid}">
+            </div>
+
+            <div class="col-md-4" id="materialTotalAmtGroup_${uid}">
+              <label class="form-label form-label-sm mb-1">Total Amount</label>
+              <input type="number" step="0.01" min="0" class="form-control form-control-sm"
+                id="material_total_amount_${uid}">
+            </div>
+          </div>
+
+          <div class="d-flex justify-content-between align-items-center mt-3">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="btnAddMaterialRow_${uid}">
+              + Add row
+            </button>
+            <span class="small text-muted">Scope materials</span>
+          </div>
+        `;
+
+        const modeSel = wrap.querySelector(`#material_mode_${uid}`);
+        const tbody = wrap.querySelector(`#materialLinesBody_${uid}`);
+        const addBtn = wrap.querySelector(`#btnAddMaterialRow_${uid}`);
+
+        const qtyGroup = wrap.querySelector(`#materialTotalQtyGroup_${uid}`);
+        const unitGroup = wrap.querySelector(`#materialTotalQtyUnitGroup_${uid}`);
+        const qtyInput = wrap.querySelector(`#material_total_quantity_${uid}`);
+        const unitInput = wrap.querySelector(`#material_total_quantity_unit_${uid}`);
+        const amtInput = wrap.querySelector(`#material_total_amount_${uid}`);
+
+        function createRow(opts) {
+          const o = opts || {};
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td class="text-center" data-role="sl"></td>
+            <td><input type="text" class="form-control form-control-sm" placeholder="Description" value="${esc(o.desc || "")}"></td>
+            <td data-col="unit"><input type="text" class="form-control form-control-sm" placeholder="Unit" value="${esc(o.unit || "")}"></td>
+            <td data-col="qty"><input type="number" step="0.01" min="0" class="form-control form-control-sm" placeholder="Qty" value="${o.qty != null ? esc(o.qty) : ""}"></td>
+            <td data-col="rate"><input type="number" step="0.01" min="0" class="form-control form-control-sm" placeholder="Rate" value="${o.rate != null ? esc(o.rate) : ""}"></td>
+            <td data-col="amt"><input type="number" step="0.01" min="0" class="form-control form-control-sm" placeholder="Amount" value="${o.amt != null ? esc(o.amt) : ""}"></td>
+            <td class="text-center" data-col="rm"><button type="button" class="btn btn-sm btn-outline-danger" data-role="rm">×</button></td>
+          `;
+          return tr;
+        }
+
+        function renumberRows() {
+          Array.from(tbody.querySelectorAll("tr")).forEach((tr, idx) => {
+            const cell = tr.querySelector("[data-role='sl']");
+            if (cell) cell.textContent = String(idx + 1);
           });
-          qtyInputs.forEach((i) => {
-            i.removeAttribute("disabled");
-          });
-          rateInputs.forEach((i) => {
-            i.value = "";
-            i.setAttribute("disabled", "disabled");
-          });
-          amountInputs.forEach((i) => {
-            i.value = "";
-            i.setAttribute("disabled", "disabled");
-          });
+        }
 
-          if (totalQtyGroup) totalQtyGroup.classList.remove("d-none");
-          if (totalAmountInput) {
-            totalAmountInput.disabled = false;
+        function ensureOneRow() {
+          if (!tbody.querySelector("tr")) tbody.appendChild(createRow());
+          renumberRows();
+        }
+
+        function setAttachedRow() {
+          tbody.innerHTML = "";
+          const tr = createRow({ desc: "As per list attached." });
+          tbody.appendChild(tr);
+          renumberRows();
+          tr.querySelectorAll("input").forEach((inp) => inp.setAttribute("disabled", "disabled"));
+        }
+
+        function resetIfAttachedPlaceholder() {
+          const onlyRow = tbody.querySelector("tr");
+          if (!onlyRow) return;
+          const desc = onlyRow.querySelector("td input[type='text']");
+          if (!desc) return;
+          const isAttached =
+            desc.disabled &&
+            (desc.value || "").trim().toLowerCase() === "as per list attached.";
+          if (isAttached) {
+            tbody.innerHTML = "";
+            tbody.appendChild(createRow());
+            renumberRows();
           }
-          updateLumpsumTotalQtyEnableState();
-        } else {
-          // No mode:
-          // - Hide Unit/Qty/Rate/Amount
-          // - Disable & clear all numeric/unit fields
-          unitCells.forEach((td) => td.classList.add("d-none"));
-          qtyCells.forEach((td) => td.classList.add("d-none"));
-          rateCells.forEach((td) => td.classList.add("d-none"));
-          amountCells.forEach((td) => td.classList.add("d-none"));
+        }
 
-          [unitInputs, qtyInputs, rateInputs, amountInputs].forEach(function (
-            nodeList
-          ) {
-            nodeList.forEach(function (i) {
-              i.value = "";
-              i.setAttribute("disabled", "disabled");
+        function updateLumpsumLocks() {
+          const mode = modeSel.value || "";
+          if (mode !== "LUMPSUM") return;
+
+          let anyLineQty = false;
+          tbody.querySelectorAll("tr").forEach((tr) => {
+            const qty = tr.querySelector("td[data-col='qty'] input");
+            const v = qty ? parseNum(qty.value) : null;
+            if (v != null && v !== 0) anyLineQty = true;
+          });
+
+          const headerQty = parseNum(qtyInput.value);
+          const headerHasQty = headerQty != null && headerQty !== 0;
+
+          if (anyLineQty) {
+            qtyInput.disabled = true;
+            unitInput.disabled = true;
+            tbody.querySelectorAll("td[data-col='qty'] input").forEach((inp) => (inp.disabled = false));
+          } else if (headerHasQty) {
+            qtyInput.disabled = false;
+            unitInput.disabled = false;
+            tbody.querySelectorAll("td[data-col='qty'] input").forEach((inp) => {
+              inp.value = "";
+              inp.disabled = true;
+            });
+          } else {
+            qtyInput.disabled = false;
+            unitInput.disabled = false;
+            tbody.querySelectorAll("td[data-col='qty'] input").forEach((inp) => (inp.disabled = false));
+          }
+        }
+
+        function recomputeItemAmounts() {
+          const mode = modeSel.value || "";
+          if (mode !== "ITEM") return;
+
+          let sum = 0;
+          tbody.querySelectorAll("tr").forEach((tr) => {
+            const qty = tr.querySelector("td[data-col='qty'] input");
+            const rate = tr.querySelector("td[data-col='rate'] input");
+            const amt = tr.querySelector("td[data-col='amt'] input");
+
+            const qv = qty ? parseNum(qty.value) : null;
+            const rv = rate ? parseNum(rate.value) : null;
+
+            if (amt) {
+              if (qv != null && rv != null) {
+                const av = qv * rv;
+                amt.value = Number.isFinite(av) ? av.toFixed(2) : "";
+                sum += Number.isFinite(av) ? av : 0;
+              } else {
+                amt.value = "";
+              }
+            }
+          });
+
+          amtInput.value = sum > 0 ? sum.toFixed(2) : "";
+        }
+
+        function applyModeVisibility() {
+          const mode = modeSel.value || "";
+
+          if (mode !== "ATTACHED") resetIfAttachedPlaceholder();
+
+          const showQtyHeader = mode === "LUMPSUM";
+          qtyGroup.style.display = showQtyHeader ? "" : "none";
+          unitGroup.style.display = showQtyHeader ? "" : "none";
+
+          const showRateAmt = mode === "ITEM";
+          const showQtyUnitCols = mode === "ITEM" || mode === "LUMPSUM";
+          const showRm = mode !== "ATTACHED";
+
+          wrap.querySelectorAll("[data-col='unit']").forEach((el) => (el.style.display = showQtyUnitCols ? "" : "none"));
+          wrap.querySelectorAll("[data-col='qty']").forEach((el) => (el.style.display = showQtyUnitCols ? "" : "none"));
+          wrap.querySelectorAll("[data-col='rate']").forEach((el) => (el.style.display = showRateAmt ? "" : "none"));
+          wrap.querySelectorAll("[data-col='amt']").forEach((el) => (el.style.display = showRateAmt ? "" : "none"));
+          wrap.querySelectorAll("[data-col='rm']").forEach((el) => (el.style.display = showRm ? "" : "none"));
+
+          if (mode === "ITEM") {
+            qtyInput.value = "";
+            unitInput.value = "";
+            qtyInput.disabled = true;
+            unitInput.disabled = true;
+
+            amtInput.disabled = true;
+
+            addBtn.disabled = false;
+
+            ensureOneRow();
+            tbody.querySelectorAll("tr").forEach((tr) => {
+              const unit = tr.querySelector("td[data-col='unit'] input");
+              const qty = tr.querySelector("td[data-col='qty'] input");
+              const rate = tr.querySelector("td[data-col='rate'] input");
+              const amt = tr.querySelector("td[data-col='amt'] input");
+              const desc = tr.querySelector("td input[type='text']");
+
+              if (unit) unit.disabled = false;
+              if (qty) qty.disabled = false;
+              if (rate) rate.disabled = false;
+              if (amt) {
+                amt.disabled = true;
+                amt.setAttribute("readonly", "readonly");
+              }
+              if (desc) desc.disabled = false;
+            });
+          } else if (mode === "LUMPSUM") {
+            amtInput.disabled = false;
+            addBtn.disabled = false;
+
+            ensureOneRow();
+
+            tbody.querySelectorAll("tr").forEach((tr) => {
+              const rate = tr.querySelector("td[data-col='rate'] input");
+              const amt = tr.querySelector("td[data-col='amt'] input");
+              if (rate) {
+                rate.value = "";
+                rate.disabled = true;
+              }
+              if (amt) {
+                amt.value = "";
+                amt.disabled = true;
+              }
+            });
+
+            updateLumpsumLocks();
+          } else if (mode === "ATTACHED") {
+            qtyInput.value = "";
+            unitInput.value = "";
+            qtyInput.disabled = true;
+            unitInput.disabled = true;
+
+            amtInput.disabled = false;
+
+            addBtn.disabled = true;
+            setAttachedRow();
+          } else {
+            qtyInput.value = "";
+            unitInput.value = "";
+            qtyInput.disabled = true;
+            unitInput.disabled = true;
+
+            amtInput.disabled = false;
+
+            addBtn.disabled = false;
+            ensureOneRow();
+          }
+        }
+
+        // init
+        tbody.appendChild(createRow());
+        renumberRows();
+        applyModeVisibility();
+
+        // IMPORTANT: these changes DO NOT rebuild accordion; they only trigger onAnyChange()
+        addBtn.addEventListener("click", () => {
+          if ((modeSel.value || "") === "ATTACHED") return;
+          tbody.appendChild(createRow());
+          renumberRows();
+          applyModeVisibility();
+          updateLumpsumLocks();
+          recomputeItemAmounts();
+          if (onAnyChange) onAnyChange();
+        });
+
+        tbody.addEventListener("click", (e) => {
+          const rm = e.target.closest("[data-role='rm']");
+          if (!rm) return;
+          if ((modeSel.value || "") === "ATTACHED") return;
+
+          const tr = rm.closest("tr");
+          if (tr) tr.remove();
+          ensureOneRow();
+          applyModeVisibility();
+          updateLumpsumLocks();
+          recomputeItemAmounts();
+          if (onAnyChange) onAnyChange();
+        });
+
+        tbody.addEventListener("input", () => {
+          updateLumpsumLocks();
+          recomputeItemAmounts();
+          if (onAnyChange) onAnyChange();
+        });
+
+        qtyInput.addEventListener("input", () => {
+          updateLumpsumLocks();
+          if (onAnyChange) onAnyChange();
+        });
+
+        modeSel.addEventListener("change", () => {
+          applyModeVisibility();
+          updateLumpsumLocks();
+          recomputeItemAmounts();
+          if (onAnyChange) onAnyChange();
+        });
+
+        function readBlock() {
+          const mode = (modeSel.value || "").toUpperCase();
+
+          const lines = [];
+          tbody.querySelectorAll("tr").forEach((tr) => {
+            const desc = (tr.querySelector("td input[type='text']")?.value || "").trim();
+            const unit = (tr.querySelector("td[data-col='unit'] input")?.value || "").trim();
+            const qty = parseNum(tr.querySelector("td[data-col='qty'] input")?.value);
+            const rate = parseNum(tr.querySelector("td[data-col='rate'] input")?.value);
+            const amt = parseNum(tr.querySelector("td[data-col='amt'] input")?.value);
+
+            if (!desc && !unit && qty == null && rate == null && amt == null) return;
+
+            lines.push({
+              description: desc,
+              unit: unit || null,
+              quantity: qty,
+              rate: rate,
+              amount: amt,
             });
           });
 
-          if (totalQtyGroup) totalQtyGroup.classList.add("d-none");
-          if (totalQtyInput) {
-            totalQtyInput.disabled = true;
-            totalQtyInput.value = "";
-          }
-          if (totalUnitInput) {
-            totalUnitInput.disabled = true;
-            totalUnitInput.value = "";
-          }
-          if (totalAmountInput) {
-            totalAmountInput.disabled = true;
-            totalAmountInput.value = "";
-          }
+          return {
+            mode: mode || null,
+            total_quantity: parseNum(qtyInput.value),
+            total_quantity_unit: (unitInput.value || "").trim() || null,
+            total_amount: parseNum(amtInput.value),
+            lines: lines,
+          };
         }
+
+        wrap.__readMaterialBlock__ = readBlock;
+        return wrap;
       }
 
-      function handleTableEvents(e) {
-        const target = e.target;
-        const mode = modeSelect.value;
+      // Current scope list (in memory, regenerated when authorities change)
+      let currentScopes = [];
+      let lastSignature = "";
 
-        // Remove row
-        if (target.matches("[data-role='remove-material-line-detail']")) {
-          const row = target.closest("tr");
-          if (row) {
-            row.remove();
-            if (tbody.children.length === 0) {
-              addRow();
-            } else {
-              renumberRows();
-            }
-            recalcHeaderTotals();
-            updateLumpsumTotalQtyEnableState();
-          }
-          return;
-        }
+      function signatureOfScopes(scopes) {
+        return JSON.stringify(
+          scopes.map((s) => [
+            (s.from.location_code || "").toUpperCase(),
+            String(s.from.authority_id),
+            (s.to.location_code || "").toUpperCase(),
+            String(s.to.authority_id),
+          ])
+        );
+      }
 
-        // ITEM mode: auto amount + header totals
-        if (
-          mode === "ITEM" &&
-          (target.classList.contains("material-qty") ||
-            target.classList.contains("material-rate"))
-        ) {
-          const row = target.closest("tr");
-          if (!row) return;
+      function collectBlocksIntoCurrentScopes() {
+        const items = Array.from(accordion.querySelectorAll(".accordion-item"));
+        currentScopes.forEach((scope, idx) => {
+          const item = items[idx];
+          const root = item ? item.__materialRoot__ : null;
+          scope.material = root && root.__readMaterialBlock__ ? root.__readMaterialBlock__() : null;
+        });
+        return currentScopes;
+      }
 
-          const qtyInput = row.querySelector(".material-qty");
-          const rateInput = row.querySelector(".material-rate");
-          const amtInput = row.querySelector(".material-amount");
+      function updateJsonAndValidityUI() {
+        const scopesWithBlocks = collectBlocksIntoCurrentScopes();
+        const validity = computeValidity(scopesWithBlocks);
 
-          if (!qtyInput || !rateInput || !amtInput) return;
+        setScopesJson(scopesWithBlocks);
+        setEmptyHintVisible(scopesWithBlocks.length === 0);
+        setSaveEnabled(validity.ok);
 
-          const q = parseFloatSafe(qtyInput.value);
-          const r = parseFloatSafe(rateInput.value);
-
-          if (q !== null && r !== null) {
-            amtInput.value = (q * r).toFixed(2);
+        if (errorEl) {
+          if (validity.ok) {
+            errorEl.classList.add("d-none");
           } else {
-            amtInput.value = "";
+            // keep hidden during typing; show on submit only
+            errorEl.classList.add("d-none");
           }
-
-          recalcHeaderTotals();
-        }
-
-        // LUMPSUM: keep header vs per-line qty rules in sync
-        if (mode === "LUMPSUM" && target.classList.contains("material-qty")) {
-          updateLumpsumTotalQtyEnableState();
         }
       }
 
-      // Wire events
-      btnAddRow.addEventListener("click", function () {
-        addRow();
-      });
+      function buildAccordionForScopes(scopes) {
+        accordion.innerHTML = "";
 
-      tbody.addEventListener("click", handleTableEvents);
-      tbody.addEventListener("input", handleTableEvents);
+        scopes.forEach((scope, idx) => {
+          const headId = `matScopeHead_${idx}`;
+          const bodyId = `matScopeBody_${idx}`;
+          const title = scopeHeaderText(scope);
 
-      if (modeSelect) {
-        modeSelect.addEventListener("change", function () {
-          applyModeVisibility();
-          recalcHeaderTotals();
-          updateLumpsumTotalQtyEnableState();
+          const item = document.createElement("div");
+          item.className = "accordion-item";
+          item.innerHTML = `
+            <h2 class="accordion-header" id="${headId}">
+              <button class="accordion-button ${idx === 0 ? "" : "collapsed"}" type="button"
+                data-bs-toggle="collapse" data-bs-target="#${bodyId}"
+                aria-expanded="${idx === 0 ? "true" : "false"}" aria-controls="${bodyId}">
+                ${esc(title)}
+              </button>
+            </h2>
+            <div id="${bodyId}" class="accordion-collapse collapse ${idx === 0 ? "show" : ""}"
+              aria-labelledby="${headId}">
+              <div class="accordion-body" data-role="scope-body"></div>
+            </div>
+          `;
+
+          const body = item.querySelector("[data-role='scope-body']");
+          const tableDom = createMaterialsTableDOM(idx + 1, updateJsonAndValidityUI);
+          body.appendChild(tableDom);
+
+          item.__materialRoot__ = tableDom;
+          accordion.appendChild(item);
         });
       }
 
-      if (totalQtyInput) {
-        totalQtyInput.addEventListener("input", function () {
-          updateLumpsumTotalQtyEnableState();
+      // Debounced rebuild ONLY for scope changes
+      let rebuildTimer = null;
+      function scheduleRebuild() {
+        if (rebuildTimer) clearTimeout(rebuildTimer);
+        rebuildTimer = setTimeout(() => {
+          const scopes = computeAuthorityPairScopes();
+          const sig = signatureOfScopes(scopes);
+
+          currentScopes = scopes;
+
+          // rebuild accordion only if scopes changed
+          if (sig !== lastSignature) {
+            lastSignature = sig;
+            buildAccordionForScopes(currentScopes);
+          }
+
+          updateJsonAndValidityUI();
+        }, 60);
+      }
+
+      window.__BOOKING_SCHEDULE_SCOPES_REBUILD__ = scheduleRebuild;
+
+      // initial
+      scheduleRebuild();
+
+      // submit guard
+      const form = accordion.closest("form");
+      if (form) {
+        form.addEventListener("submit", (e) => {
+          updateJsonAndValidityUI();
+          const validity = computeValidity(collectBlocksIntoCurrentScopes());
+          if (!validity.ok) {
+            e.preventDefault();
+            if (errorEl) {
+              errorEl.textContent = validity.msg || "Please complete all scope material tables.";
+              errorEl.classList.remove("d-none");
+            }
+          }
         });
       }
+    })();
 
-      // Initial setup
-      if (!tbody.querySelector("tr")) {
-        addRow();
-      } else {
-        renumberRows();
-        applyModeVisibility();
-        updateLumpsumTotalQtyEnableState();
-        recalcHeaderTotals();
+    // Global helper called from earlier sections
+    function scheduleScopesRebuild() {
+      if (window.__BOOKING_SCHEDULE_SCOPES_REBUILD__) {
+        window.__BOOKING_SCHEDULE_SCOPES_REBUILD__();
       }
-    })();
-
-    // ========================================
-    // Booking detail: placement date confirmation
-    // ========================================
-    (function setupPlacementDateConfirm() {
-      const placementInput = document.getElementById("editPlacementDate");
-      if (!placementInput) return;
-
-      const form = placementInput.closest("form");
-      if (!form) return;
-
-      // We assume the disabled text input in this form holds booking_date as ISO (YYYY-MM-DD)
-      const bookingDateInput = form.querySelector(
-        "input[disabled][type='text']"
-      );
-      const bookingDateStr = bookingDateInput
-        ? bookingDateInput.value.trim()
-        : "";
-
-      // Today's date (editing date) as ISO YYYY-MM-DD
-      const today = new Date();
-      const yyyy = today.getFullYear();
-      const mm = String(today.getMonth() + 1).padStart(2, "0");
-      const dd = String(today.getDate()).padStart(2, "0");
-      const todayStr = `${yyyy}-${mm}-${dd}`;
-
-      form.addEventListener("submit", function (evt) {
-        if (!placementInput.value || !bookingDateStr) {
-          return;
-        }
-
-        const newDate = placementInput.value.trim(); // from <input type="date">, ISO format
-
-        // We only warn when user is back-dating:
-        // booking_date < newDate < today
-        if (newDate > bookingDateStr && newDate < todayStr) {
-          const ok = window.confirm(
-            "Placement date (" +
-              newDate +
-              ") is earlier than today (" +
-              todayStr +
-              ") but after the booking date (" +
-              bookingDateStr +
-              ").\n\n" +
-              "Do you want to proceed with this back-dated placement?"
-          );
-          if (!ok) {
-            evt.preventDefault();
-          }
-        }
-      });
-    })();
-
+    }
+    window.scheduleScopesRebuild = scheduleScopesRebuild;
   });
 }
