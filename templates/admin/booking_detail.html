@@ -13,6 +13,21 @@
     </h4>
 
     <div class="d-flex gap-2">
+
+      {# Generate Placement Advice (blocked if cancelled) #}
+      {% if booking.status != 'CANCELLED' %}
+        <a
+          href="{{ url_for('admin.generate_placement_advice', booking_id=booking.id) }}"
+          class="btn btn-sm btn-outline-primary"
+        >
+          Generate Placement Advice
+        </a>
+      {% else %}
+        <button class="btn btn-sm btn-outline-secondary" disabled>
+          Placement Advice (Cancelled)
+        </button>
+      {% endif %}
+
       {# Back to History – preserve filters if present #}
       <a
         href="{{ url_for('admin.dashboard',

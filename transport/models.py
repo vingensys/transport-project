@@ -21,12 +21,17 @@ class Agreement(db.Model):
     __tablename__ = "agreement"
 
     id = db.Column(db.Integer, primary_key=True)
+
     loa_number = db.Column(db.String(100), nullable=False)
+
+    # Letter-only reference prefix
+    # Example: "SA/A/RS/ED/OT"
+    placement_ref_prefix = db.Column(db.String(150), nullable=True)
+
     total_mt_km = db.Column(db.Float, nullable=False)
     rate_per_mt_km = db.Column(db.Float, nullable=False)
     is_active = db.Column(db.Boolean, default=False)
 
-    # Relationship to company
     company_id = db.Column(db.Integer, db.ForeignKey("company.id"), nullable=False)
     company = db.relationship("Company", backref="agreements")
 
@@ -51,14 +56,8 @@ class Location(db.Model):
     __tablename__ = "location"
 
     id = db.Column(db.Integer, primary_key=True)
-
-    # Short code like NDLS, ED, MAS, TVC
     code = db.Column(db.String(10), unique=True, nullable=False)
-
-    # Full name like "New Delhi", "Erode Junction"
     name = db.Column(db.String(100), nullable=False)
-
-    # Optional address or description
     address = db.Column(db.String(200))
 
     def __repr__(self):
@@ -70,14 +69,10 @@ class Authority(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
 
-    # FK → Location
     location_id = db.Column(db.Integer, db.ForeignKey("location.id"), nullable=False)
     location = db.relationship("Location", backref="authorities")
 
-    # Designation (e.g., "Station Master", "CGS", "Yard Supervisor")
     authority_title = db.Column(db.String(100), nullable=False)
-
-    # Optional office address
     address = db.Column(db.String(200))
 
     def __repr__(self):
@@ -88,23 +83,12 @@ class Route(db.Model):
     __tablename__ = "route"
 
     id = db.Column(db.Integer, primary_key=True)
-
-    # Short code / reference for the route (e.g., "RPM_PER_AJJ_ED_R1")
     code = db.Column(db.String(50), unique=True, nullable=False)
-
-    # Human-readable name (e.g., "RPM – PER – AJJ – ED (via PER cluster)")
     name = db.Column(db.String(200), nullable=False)
-
-    # Total length of the route in kilometers
     total_km = db.Column(db.Integer, nullable=False)
-
-    # Active/inactive for operational use
     is_active = db.Column(db.Boolean, nullable=False, default=True)
-
-    # Optional remarks
     remarks = db.Column(db.String(250))
 
-    # Relationship to RouteStop (ordered by sequence_index)
     stops = db.relationship(
         "RouteStop",
         backref="route",
@@ -124,17 +108,11 @@ class RouteStop(db.Model):
     route_id = db.Column(db.Integer, db.ForeignKey("route.id"), nullable=False)
     location_id = db.Column(db.Integer, db.ForeignKey("location.id"), nullable=False)
 
-    # Order along the route: 1, 2, 3, ...
     sequence_index = db.Column(db.Integer, nullable=False)
-
-    # Mark if this stop belongs to the start cluster and/or end cluster
     is_start_cluster = db.Column(db.Boolean, nullable=False, default=False)
     is_end_cluster = db.Column(db.Boolean, nullable=False, default=False)
-
-    # Optional remarks for this stop (e.g., "Yard", "Goods Shed")
     remarks = db.Column(db.String(200))
 
-    # Convenience relationship to Location
     location = db.relationship("Location")
 
     def __repr__(self):
@@ -175,16 +153,10 @@ class Booking(db.Model):
     agreement_id = db.Column(db.Integer, db.ForeignKey("agreement.id"), nullable=False)
     company_id = db.Column(db.Integer, db.ForeignKey("company.id"), nullable=False)
     lorry_id = db.Column(db.Integer, db.ForeignKey("lorry_details.id"), nullable=False)
-
-    # Route ALWAYS present (matched/created from sequence)
     route_id = db.Column(db.Integer, db.ForeignKey("route.id"), nullable=False)
 
-    # Either from the route (if matched) or supplied by user
     trip_km = db.Column(db.Integer, nullable=False)
-
-    # When the lorry is actually required / placed
     placement_date = db.Column(db.Date, nullable=False, default=date.today)
-
     booking_date = db.Column(db.Date, nullable=False, default=date.today)
 
     remarks = db.Column(db.String(250))
@@ -197,23 +169,15 @@ class Booking(db.Model):
         onupdate=datetime.utcnow,
     )
 
-    # -------------------------
-    # Soft delete / status flags
-    # -------------------------
-    # ACTIVE  – normal booking
-    # CANCELLED – soft-deleted, must remain in DB
     status = db.Column(db.String(20), nullable=False, default="ACTIVE", index=True)
-
     cancelled_at = db.Column(db.DateTime)
     cancel_reason = db.Column(db.String(255))
 
-    # convenience relationships
     agreement = db.relationship("Agreement")
     company = db.relationship("Company")
     lorry = db.relationship("LorryDetails")
     route = db.relationship("Route")
 
-    # --- Materials: one booking → many material tables (typically one per loading point) ---
     material_tables = db.relationship(
         "BookingMaterial",
         back_populates="booking",
@@ -223,15 +187,7 @@ class Booking(db.Model):
 
     @property
     def material_table(self):
-        """
-        Backwards-compatible alias for legacy code that still expects a single
-        material table per booking. Returns the first material table if any,
-        otherwise None.
-        """
         return self.material_tables[0] if self.material_tables else None
-
-    def __repr__(self):
-        return f"<Booking id={self.id} route={self.route_id} km={self.trip_km}>"
 
     def cancel(self, reason: str | None = None):
         self.status = "CANCELLED"
@@ -242,6 +198,9 @@ class Booking(db.Model):
     def is_cancelled(self) -> bool:
         return self.status == "CANCELLED"
 
+    def __repr__(self):
+        return f"<Booking id={self.id} route={self.route_id} km={self.trip_km}>"
+
 
 class BookingAuthority(db.Model):
     __tablename__ = "booking_authority"
@@ -251,10 +210,7 @@ class BookingAuthority(db.Model):
     booking_id = db.Column(db.Integer, db.ForeignKey("booking.id"), nullable=False)
     authority_id = db.Column(db.Integer, db.ForeignKey("authority.id"), nullable=False)
 
-    # 'LOADING' or 'UNLOADING'
     role = db.Column(db.String(20), nullable=False)
-
-    # ordering for letters (1,2,3...)
     sequence_index = db.Column(db.Integer, nullable=False, default=1)
 
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -262,7 +218,6 @@ class BookingAuthority(db.Model):
     booking = db.relationship("Booking", backref="booking_authorities")
     authority = db.relationship("Authority")
 
-    # materials where this BA is the FROM side
     materials_from = db.relationship(
         "BookingMaterial",
         foreign_keys="BookingMaterial.booking_authority_id",
@@ -270,7 +225,6 @@ class BookingAuthority(db.Model):
         lazy="select",
     )
 
-    # materials where this BA is the TO side
     materials_to = db.relationship(
         "BookingMaterial",
         foreign_keys="BookingMaterial.to_booking_authority_id",
@@ -280,11 +234,6 @@ class BookingAuthority(db.Model):
 
     @property
     def material_table(self):
-        """
-        Backwards-compatible convenience:
-        for now we treat the *first* FROM-material as "the" table
-        for this authority, if code ever wants ba.material_table.
-        """
         return self.materials_from[0] if self.materials_from else None
 
     def __repr__(self):
@@ -292,12 +241,13 @@ class BookingAuthority(db.Model):
             f"<BookingAuthority booking={self.booking_id} "
             f"authority={self.authority_id} role={self.role}>"
         )
+
+
 class BookingMaterial(db.Model):
     __tablename__ = "booking_material"
 
     id = db.Column(db.Integer, primary_key=True)
 
-    # Many material tables per booking (typically one per loading point)
     booking_id = db.Column(
         db.Integer,
         db.ForeignKey("booking.id", ondelete="CASCADE"),
@@ -305,7 +255,6 @@ class BookingMaterial(db.Model):
         index=True,
     )
 
-    # "FROM" side in this booking (usually a LOADING BookingAuthority)
     booking_authority_id = db.Column(
         db.Integer,
         db.ForeignKey("booking_authority.id", ondelete="SET NULL"),
@@ -313,7 +262,6 @@ class BookingMaterial(db.Model):
         index=True,
     )
 
-    # Optional "TO" side (for destination authority)
     to_booking_authority_id = db.Column(
         db.Integer,
         db.ForeignKey("booking_authority.id", ondelete="SET NULL"),
@@ -321,29 +269,20 @@ class BookingMaterial(db.Model):
         index=True,
     )
 
-    # Modes:
-    #   "ITEM"     → item-wise detailed list
-    #   "LUMPSUM"  → descriptive list + booking-level totals
     mode = db.Column(db.String(10), nullable=False, default="ITEM")
 
-    # Header totals (only meaningful for LUMPSUM, automatically derived in ITEM)
-    total_quantity = db.Column(db.Float)               # overall quantity if applicable
-    total_quantity_unit = db.Column(db.String(50))     # "Ton", "MT", "Pkg", etc.
-    total_amount = db.Column(db.Float)                 # total amount for this material table
+    total_quantity = db.Column(db.Float)
+    total_quantity_unit = db.Column(db.String(50))
+    total_amount = db.Column(db.Float)
 
-    # Ordering of material tables within a booking (follow loading sequence)
     sequence_index = db.Column(db.Integer, nullable=False, default=1)
 
-    # --- ORM relationships ---
-
-    # Back to booking, as before
     booking = db.relationship(
         "Booking",
         back_populates="material_tables",
         lazy="joined",
     )
 
-    # FROM side: the loading point this material belongs to
     booking_authority = db.relationship(
         "BookingAuthority",
         foreign_keys=[booking_authority_id],
@@ -351,7 +290,6 @@ class BookingMaterial(db.Model):
         lazy="joined",
     )
 
-    # TO side: optional destination point for this material
     to_booking_authority = db.relationship(
         "BookingAuthority",
         foreign_keys=[to_booking_authority_id],
@@ -386,22 +324,67 @@ class BookingMaterialLine(db.Model):
         nullable=False,
     )
 
-    # Sl.No / ordering
     sequence_index = db.Column(db.Integer, nullable=False, default=1)
-
-    # Always required
     description = db.Column(db.String(250), nullable=False)
 
-    # Optional: quantity details
-    unit = db.Column(db.String(50))        # e.g., "Ton", "Pkg"
-    quantity = db.Column(db.Float)         # optional, per-line
-
-    # Item-wise only
-    rate = db.Column(db.Float)             # optional
-    amount = db.Column(db.Float)           # optional (qty * rate for ITEM)
+    unit = db.Column(db.String(50))
+    quantity = db.Column(db.Float)
+    rate = db.Column(db.Float)
+    amount = db.Column(db.Float)
 
     def __repr__(self):
         return (
             f"<BookingMaterialLine tbl={self.booking_material_id} sl={self.sequence_index} "
             f"desc='{self.description}'>"
         )
+
+
+# -------------------------------------------------------------------
+# LETTER MODULE (new, isolated, no impact on booking/material logic)
+# -------------------------------------------------------------------
+
+class BookingLetter(db.Model):
+    __tablename__ = "booking_letter"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    booking_id = db.Column(db.Integer, db.ForeignKey("booking.id"), nullable=False)
+
+    # PLACEMENT / MODIFICATION / CANCELLATION / AUTHORIZATION
+    letter_type = db.Column(db.String(20), nullable=False)
+
+    # Sequence per booking + letter_type
+    sequence_no = db.Column(db.Integer, nullable=False)
+
+    letter_date = db.Column(db.Date, nullable=False)
+
+    # Frozen context used to generate this letter
+    snapshot_json = db.Column(db.JSON, nullable=False)
+
+    # Final merged PDF path
+    pdf_path = db.Column(db.String(300), nullable=False)
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    booking = db.relationship("Booking")
+
+    def __repr__(self):
+        return f"<BookingLetter {self.letter_type} booking={self.booking_id} seq={self.sequence_no}>"
+
+
+class BookingLetterAttachment(db.Model):
+    __tablename__ = "booking_letter_attachment"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    booking_letter_id = db.Column(
+        db.Integer, db.ForeignKey("booking_letter.id"), nullable=False
+    )
+
+    stored_path = db.Column(db.String(300), nullable=False)
+    original_filename = db.Column(db.String(200), nullable=False)
+
+    letter = db.relationship("BookingLetter", backref="attachments")
+
+    def __repr__(self):
+        return f"<BookingLetterAttachment letter={self.booking_letter_id}>"

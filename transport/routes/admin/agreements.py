@@ -8,6 +8,19 @@ def _redirect_agreement_tab():
     return redirect(url_for("admin.dashboard") + "#agreement")
 
 
+def _normalize_prefix(value: str | None) -> str | None:
+    """
+    Normalize placement ref prefix used in letters.
+    - Strip whitespace
+    - Collapse to None if blank
+    - Uppercase for consistency
+    """
+    v = (value or "").strip()
+    if not v:
+        return None
+    return v.upper()
+
+
 @admin_bp.route("/agreement/add", methods=["POST"])
 def add_agreement():
     """Add a new agreement for a company."""
@@ -15,6 +28,9 @@ def add_agreement():
     loa_number = (request.form.get("loa_number") or "").strip()
     total_mt_km = request.form.get("total_mt_km", type=float)
     rate_per_mt_km = request.form.get("rate_per_mt_km", type=float)
+
+    # NEW: Placement reference prefix (letter-only)
+    placement_ref_prefix = _normalize_prefix(request.form.get("placement_ref_prefix"))
 
     errors = []
 
@@ -66,6 +82,7 @@ def add_agreement():
         total_mt_km=total_mt_km,
         rate_per_mt_km=rate_per_mt_km,
         is_active=False,  # always false until activated
+        placement_ref_prefix=placement_ref_prefix,  # NEW
     )
 
     db.session.add(ag)
@@ -84,6 +101,9 @@ def edit_agreement(agreement_id: int):
     loa_number = (request.form.get("loa_number") or "").strip()
     total_mt_km = request.form.get("total_mt_km", type=float)
     rate_per_mt_km = request.form.get("rate_per_mt_km", type=float)
+
+    # NEW: Placement reference prefix (letter-only)
+    placement_ref_prefix = _normalize_prefix(request.form.get("placement_ref_prefix"))
 
     errors = []
 
@@ -124,6 +144,9 @@ def edit_agreement(agreement_id: int):
             errors.append("Rate per MT-KM must be a positive value.")
         else:
             ag.rate_per_mt_km = rate_per_mt_km
+
+    # NEW: prefix update (can be cleared)
+    ag.placement_ref_prefix = placement_ref_prefix
 
     if errors:
         flash(" ".join(errors), "error")

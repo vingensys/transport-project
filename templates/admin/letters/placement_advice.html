@@ -1,0 +1,121 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+<div class="container-fluid mt-3">
+
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h5 class="mb-1">
+        Generate Placement Advice — Booking #{{ booking.id }}
+      </h5>
+      <div class="small text-muted">
+        Create Placement Advice PDF for this booking.
+      </div>
+    </div>
+
+    <div class="d-flex gap-2">
+      {# Back to History (preserve filters if present) #}
+      <a
+        href="{{ url_for('admin.dashboard',
+                         booking_scope=request.args.get('booking_scope'),
+                         booking_status=request.args.get('booking_status'),
+                         booking_search=request.args.get('booking_search')) }}#history"
+        class="btn btn-sm btn-outline-secondary"
+      >
+        ← Back to History
+      </a>
+
+      {# Back to Booking Detail #}
+      <a
+        href="{{ url_for('admin.booking_detail',
+                         booking_id=booking.id,
+                         booking_scope=request.args.get('booking_scope'),
+                         booking_status=request.args.get('booking_status'),
+                         booking_search=request.args.get('booking_search')) }}"
+        class="btn btn-sm btn-outline-secondary"
+      >
+        ← Back to Booking Detail
+      </a>
+    </div>
+  </div>
+
+  <form
+    method="POST"
+    action="{{ url_for('admin.generate_placement_advice', booking_id=booking.id) }}"
+    enctype="multipart/form-data"
+    class="card"
+  >
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="card-body">
+
+      <div class="row mb-3">
+        <div class="col-md-3">
+          <label class="form-label">Letter Date</label>
+          <input
+            type="date"
+            name="letter_date"
+            class="form-control"
+            value="{{ default_letter_date }}"
+            required
+          >
+          <div class="form-text">
+            Used in the generated PDF.
+          </div>
+        </div>
+      </div>
+
+      {% if requires_attachment %}
+        <div class="alert alert-warning">
+          This booking contains <strong>ATTACHED</strong> material scope(s). Please upload the material list PDF to be appended.
+        </div>
+
+        <div class="row mb-3">
+          <div class="col-md-6">
+            <label class="form-label">Material Attachment (PDF)</label>
+            <input
+              type="file"
+              name="attachment_pdf"
+              accept="application/pdf"
+              class="form-control"
+              required
+            >
+          </div>
+        </div>
+      {% endif %}
+
+    </div>
+
+    <div class="card-footer d-flex justify-content-between">
+      <a
+        href="{{ url_for('admin.booking_detail',
+                         booking_id=booking.id,
+                         booking_scope=request.args.get('booking_scope'),
+                         booking_status=request.args.get('booking_status'),
+                         booking_search=request.args.get('booking_search')) }}"
+        class="btn btn-outline-secondary"
+      >
+        ← Back
+      </a>
+
+      <div class="d-flex gap-2">
+        <a
+          href="{{ url_for('admin.booking_detail',
+                           booking_id=booking.id,
+                           booking_scope=request.args.get('booking_scope'),
+                           booking_status=request.args.get('booking_status'),
+                           booking_search=request.args.get('booking_search')) }}"
+          class="btn btn-secondary"
+        >
+          Cancel
+        </a>
+        <button class="btn btn-primary">
+          Generate Placement Advice
+        </button>
+      </div>
+    </div>
+
+  </form>
+
+</div>
+{% endblock %}
