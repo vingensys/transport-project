@@ -262,16 +262,28 @@
     </div>
   </div>
 
-  <!-- Materials: editor on this page (markup only, JS lives in static js file) -->
+  {# -------------------------------------------------------------------- #}
+  {# Materials (MULTI-SCOPE editor on detail page)                          #}
+  {# JS serializes accordion state into a single hidden JSON field.         #}
+  {# -------------------------------------------------------------------- #}
+
+  {% set mats = booking.material_tables if booking else [] %}
+  {% set mats_sorted = mats|sort(attribute='sequence_index') %}
+
   <div class="card mt-4">
     <div class="card-header bg-light d-flex justify-content-between align-items-center">
-      <span>Materials</span>
+      <span>Materials (per scope)</span>
       <small class="text-muted">
-        Edit item-wise (ITEM) or lumpsum material list.
+        Each scope = Loading Authority → Unloading Authority.
       </small>
     </div>
+
     <div class="card-body">
-      {% set current_mode = material.mode if material else "" %}
+      {% if booking.status == 'CANCELLED' %}
+        <div class="alert alert-warning mb-3">
+          This booking has been cancelled. Editing is disabled.
+        </div>
+      {% endif %}
 
       <form
         method="POST"
@@ -279,311 +291,335 @@
         id="materialEditFormDetail"
       >
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="materials_scopes_json" id="materialsScopesJSONDetail" value="">
 
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <div>
-            <h6 class="mb-0">Material Details</h6>
-            <small class="text-muted">
-              ITEM mode: per-line Qty × Rate → Amount. LUMPSUM: descriptive lines + optional totals.
-            </small>
+        {% if not mats_sorted %}
+          <div class="text-muted">
+            No material scopes found for this booking yet.
           </div>
-          <div class="ms-3" style="min-width: 220px;">
-            <label for="materialModeDetail" class="form-label form-label-sm mb-1">Mode</label>
-            <select
-              class="form-select form-select-sm"
-              id="materialModeDetail"
-              name="material_mode"
-            >
-              <option value="" {% if not current_mode %}selected{% endif %}>(No Material List)</option>
-              <option value="ITEM" {% if current_mode == 'ITEM' %}selected{% endif %}>Item-wise (ITEM)</option>
-              <option value="LUMPSUM" {% if current_mode == 'LUMPSUM' %}selected{% endif %}>Lumpsum</option>
-            </select>
-          </div>
-        </div>
+        {% else %}
 
-        <div class="table-responsive mb-3">
-          <table class="table table-sm table-bordered align-middle mb-0">
-            <thead class="table-secondary">
-              <tr class="text-center">
-                <th style="width: 40px;">Sl.</th>
-                <th>Description</th>
-                <th style="width: 100px;">Unit</th>
-                <th style="width: 110px;">Qty</th>
-                <!-- widened -->
-                <th style="width: 140px;">Rate</th>
-                <th style="width: 170px;">Amount</th>
-                <th style="width: 50px;"></th>
-              </tr>
-            </thead>
-            <tbody id="materialLinesBodyDetail">
-              {% if material and material.lines %}
-                {% for line in material.lines %}
-                  <tr>
-                    <td class="text-center align-middle">
-                      {{ loop.index }}
-                    </td>
-                    <td>
-                      <input
-                        type="text"
-                        name="line_description[]"
-                        class="form-control form-control-sm"
-                        value="{{ line.description }}"
-                        required
-                      >
-                    </td>
-                    <td>
-                      <input
-                        type="text"
-                        name="line_unit[]"
-                        class="form-control form-control-sm"
-                        value="{{ line.unit or '' }}"
-                      >
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        name="line_quantity[]"
-                        class="form-control form-control-sm material-qty"
-                        step="0.001"
-                        min="0"
-                        value="{% if line.quantity is not none %}{{ '%.3f'|format(line.quantity) }}{% endif %}"
-                      >
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        name="line_rate[]"
-                        class="form-control form-control-sm material-rate"
-                        step="0.01"
-                        min="0"
-                        value="{% if line.rate is not none %}{{ '%.2f'|format(line.rate) }}{% endif %}"
-                      >
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        name="line_amount[]"
-                        class="form-control form-control-sm material-amount"
-                        step="0.01"
-                        min="0"
-                        value="{% if line.amount is not none %}{{ '%.2f'|format(line.amount) }}{% endif %}"
-                      >
-                    </td>
-                    <td class="text-center">
+          <div class="accordion" id="materialsScopesAccordionDetail">
+
+            {% for m in mats_sorted %}
+              {% set from_ba = m.booking_authority %}
+              {% set to_ba = m.to_booking_authority %}
+
+              {% set from_auth = from_ba.authority if from_ba else None %}
+              {% set to_auth = to_ba.authority if to_ba else None %}
+
+              {% set from_title = from_auth.authority_title if from_auth else 'Loading (Unknown)' %}
+              {% set to_title = to_auth.authority_title if to_auth else 'Unloading (Unknown)' %}
+
+              {% set from_loc = from_auth.location if from_auth else None %}
+              {% set to_loc = to_auth.location if to_auth else None %}
+
+              {% set from_loc_label = (from_loc.name ~ ' [' ~ from_loc.code ~ ']') if from_loc else '' %}
+              {% set to_loc_label = (to_loc.name ~ ' [' ~ to_loc.code ~ ']') if to_loc else '' %}
+
+              {% set scope_index = loop.index0 %}
+
+              <div
+                class="accordion-item"
+                data-scope-index="{{ scope_index }}"
+                data-from-authority-id="{{ from_auth.id if from_auth else '' }}"
+                data-to-authority-id="{{ to_auth.id if to_auth else '' }}"
+              >
+                <h2 class="accordion-header" id="scopeHead{{ scope_index }}">
+                  <button
+                    class="accordion-button {% if not loop.first %}collapsed{% endif %}"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#scopeBody{{ scope_index }}"
+                    aria-expanded="{% if loop.first %}true{% else %}false{% endif %}"
+                    aria-controls="scopeBody{{ scope_index }}"
+                  >
+                    <div class="w-100 d-flex justify-content-between align-items-center">
+                      <div>
+                        <strong>{{ from_title }}</strong>
+                        <span class="text-muted">→</span>
+                        <strong>{{ to_title }}</strong>
+                        <div class="small text-muted">
+                          {{ from_loc_label }}{% if from_loc_label and to_loc_label %} → {% endif %}{{ to_loc_label }}
+                        </div>
+                      </div>
+                      <div class="ms-3">
+                        <span class="badge bg-secondary" data-role="scope-mode-badge">
+                          {{ m.mode or '-' }}
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                </h2>
+
+                <div
+                  id="scopeBody{{ scope_index }}"
+                  class="accordion-collapse collapse {% if loop.first %}show{% endif %}"
+                  aria-labelledby="scopeHead{{ scope_index }}"
+                  data-bs-parent="#materialsScopesAccordionDetail"
+                >
+                  <div class="accordion-body">
+
+                    <div class="table-responsive">
+                      <table class="table table-sm table-bordered align-middle mb-0">
+                        <thead class="table-secondary">
+                          <tr class="text-center">
+                            <th style="width: 40px;">Sl.</th>
+                            <th>Description</th>
+                            <th style="width: 100px;">Unit</th>
+                            <th style="width: 110px;">Qty</th>
+                            <th style="width: 140px;">Rate</th>
+                            <th style="width: 170px;">Amount</th>
+                            <th style="width: 50px;"></th>
+                          </tr>
+
+                          {# Optional helper row: remove if you dislike it #}
+                          <tr class="text-muted small">
+                            <th></th>
+                            <th colspan="2">LUMPSUM: use Description + Qty (Unit optional)</th>
+                            <th class="text-center">Qty</th>
+                            <th class="text-center">Rate (ITEM only)</th>
+                            <th class="text-center">Amount (ITEM only)</th>
+                            <th></th>
+                          </tr>
+                        </thead>
+
+                        <tbody data-role="scope-lines">
+                          {% if m.lines and (m.lines|length) > 0 %}
+                            {% for line in m.lines|sort(attribute='sequence_index') %}
+                              <tr data-role="scope-line">
+                                <td class="text-center align-middle">{{ loop.index }}</td>
+                                <td>
+                                  <input
+                                    type="text"
+                                    class="form-control form-control-sm scope-desc"
+                                    value="{{ line.description }}"
+                                    required
+                                    {% if booking.status == 'CANCELLED' %}disabled{% endif %}
+                                  >
+                                </td>
+                                <td>
+                                  <input
+                                    type="text"
+                                    class="form-control form-control-sm scope-unit"
+                                    value="{{ line.unit or '' }}"
+                                    {% if booking.status == 'CANCELLED' %}disabled{% endif %}
+                                  >
+                                </td>
+                                <td>
+                                  <input
+                                    type="number"
+                                    class="form-control form-control-sm scope-qty"
+                                    step="0.001"
+                                    min="0"
+                                    value="{% if line.quantity is not none %}{{ '%.3f'|format(line.quantity) }}{% endif %}"
+                                    {% if booking.status == 'CANCELLED' %}disabled{% endif %}
+                                  >
+                                </td>
+                                <td>
+                                  <input
+                                    type="number"
+                                    class="form-control form-control-sm scope-rate"
+                                    step="0.01"
+                                    min="0"
+                                    value="{% if line.rate is not none %}{{ '%.2f'|format(line.rate) }}{% endif %}"
+                                    {% if booking.status == 'CANCELLED' %}disabled{% endif %}
+                                  >
+                                </td>
+                                <td>
+                                  <input
+                                    type="number"
+                                    class="form-control form-control-sm scope-amount"
+                                    step="0.01"
+                                    min="0"
+                                    value="{% if line.amount is not none %}{{ '%.2f'|format(line.amount) }}{% endif %}"
+                                    {% if booking.status == 'CANCELLED' %}disabled{% endif %}
+                                  >
+                                </td>
+                                <td class="text-center">
+                                  <button
+                                    type="button"
+                                    class="btn btn-sm btn-outline-danger"
+                                    data-role="remove-scope-line"
+                                    {% if booking.status == 'CANCELLED' %}disabled{% endif %}
+                                  >
+                                    ×
+                                  </button>
+                                </td>
+                              </tr>
+                            {% endfor %}
+                          {% else %}
+                            <tr data-role="scope-line">
+                              <td class="text-center align-middle">1</td>
+                              <td>
+                                <input
+                                  type="text"
+                                  class="form-control form-control-sm scope-desc"
+                                  value=""
+                                  required
+                                  {% if booking.status == 'CANCELLED' %}disabled{% endif %}
+                                >
+                              </td>
+                              <td>
+                                <input
+                                  type="text"
+                                  class="form-control form-control-sm scope-unit"
+                                  value=""
+                                  {% if booking.status == 'CANCELLED' %}disabled{% endif %}
+                                >
+                              </td>
+                              <td>
+                                <input
+                                  type="number"
+                                  class="form-control form-control-sm scope-qty"
+                                  step="0.001"
+                                  min="0"
+                                  {% if booking.status == 'CANCELLED' %}disabled{% endif %}
+                                >
+                              </td>
+                              <td>
+                                <input
+                                  type="number"
+                                  class="form-control form-control-sm scope-rate"
+                                  step="0.01"
+                                  min="0"
+                                  {% if booking.status == 'CANCELLED' %}disabled{% endif %}
+                                >
+                              </td>
+                              <td>
+                                <input
+                                  type="number"
+                                  class="form-control form-control-sm scope-amount"
+                                  step="0.01"
+                                  min="0"
+                                  {% if booking.status == 'CANCELLED' %}disabled{% endif %}
+                                >
+                              </td>
+                              <td class="text-center">
+                                <button
+                                  type="button"
+                                  class="btn btn-sm btn-outline-danger"
+                                  data-role="remove-scope-line"
+                                  {% if booking.status == 'CANCELLED' %}disabled{% endif %}
+                                >
+                                  ×
+                                </button>
+                              </td>
+                            </tr>
+                          {% endif %}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <!-- Totals moved BELOW the table (better reading flow) -->
+                    <div class="row g-3 align-items-end mt-3">
+                      <div class="col-md-4">
+                        <label class="form-label form-label-sm mb-1">Mode</label>
+                        <select
+                          class="form-select form-select-sm"
+                          data-role="scope-mode"
+                          {% if booking.status == 'CANCELLED' %}disabled{% endif %}
+                        >
+                          <option value="">(Select)</option>
+                          <option value="ITEM" {% if m.mode == 'ITEM' %}selected{% endif %}>Item-wise (ITEM)</option>
+                          <option value="LUMPSUM" {% if m.mode == 'LUMPSUM' %}selected{% endif %}>Lumpsum</option>
+                          <option value="ATTACHED" {% if m.mode == 'ATTACHED' %}selected{% endif %}>Attached</option>
+                        </select>
+                      </div>
+
+                      <div class="col-md-4">
+                        <label class="form-label form-label-sm mb-1">Total Amount</label>
+                        <div class="input-group input-group-sm">
+                          <span class="input-group-text">₹</span>
+                          <input
+                            type="number"
+                            class="form-control scope-total-amount"
+                            step="0.01"
+                            min="0"
+                            value="{% if m.total_amount is not none %}{{ '%.2f'|format(m.total_amount) }}{% endif %}"
+                            placeholder="Total / Lumpsum / Attached"
+                            {% if booking.status == 'CANCELLED' %}disabled{% endif %}
+                          >
+                        </div>
+                      </div>
+
+                      <div class="col-md-4">
+                        <label class="form-label form-label-sm mb-1">Total Quantity (LUMPSUM)</label>
+                        <div class="input-group input-group-sm">
+                          <input
+                            type="number"
+                            class="form-control scope-total-qty"
+                            step="0.001"
+                            min="0"
+                            value="{% if m.total_quantity is not none %}{{ '%.3f'|format(m.total_quantity) }}{% endif %}"
+                            placeholder="e.g. 25.500"
+                            {% if booking.status == 'CANCELLED' %}disabled{% endif %}
+                          >
+                          <input
+                            type="text"
+                            class="form-control scope-total-unit"
+                            value="{{ m.total_quantity_unit or '' }}"
+                            placeholder="Unit (e.g. MT)"
+                            {% if booking.status == 'CANCELLED' %}disabled{% endif %}
+                          >
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="mt-3 d-flex justify-content-end gap-2">
                       <button
                         type="button"
-                        class="btn btn-sm btn-outline-danger"
-                        data-role="remove-material-line-detail"
+                        class="btn btn-sm btn-outline-primary"
+                        data-role="add-scope-row"
+                        {% if booking.status == 'CANCELLED' %}disabled{% endif %}
                       >
-                        ×
+                        Add Row
                       </button>
-                    </td>
-                  </tr>
-                {% endfor %}
-              {% else %}
-                {# Render one empty row as a starting point #}
-                <tr>
-                  <td class="text-center align-middle">
-                    1
-                  </td>
-                  <td>
-                    <input
-                      type="text"
-                      name="line_description[]"
-                      class="form-control form-control-sm"
-                      value=""
-                      required
-                    >
-                  </td>
-                  <td>
-                    <input
-                      type="text"
-                      name="line_unit[]"
-                      class="form-control form-control-sm"
-                      value=""
-                    >
-                  </td>
-                  <td>
-                    <input
-                      type="number"
-                      name="line_quantity[]"
-                      class="form-control form-control-sm material-qty"
-                      step="0.001"
-                      min="0"
-                    >
-                  </td>
-                  <td>
-                    <input
-                      type="number"
-                      name="line_rate[]"
-                      class="form-control form-control-sm material-rate"
-                      step="0.01"
-                      min="0"
-                    >
-                  </td>
-                  <td>
-                    <input
-                      type="number"
-                      name="line_amount[]"
-                      class="form-control form-control-sm material-amount"
-                      step="0.01"
-                      min="0"
-                    >
-                  </td>
-                  <td class="text-center">
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-outline-danger"
-                      data-role="remove-material-line-detail"
-                    >
-                      ×
-                    </button>
-                  </td>
-                </tr>
-              {% endif %}
-            </tbody>
-          </table>
-        </div>
+                    </div>
 
-        <!-- Totals (shown below list) -->
-        <div class="row g-3 mt-3 align-items-end">
-          <div class="col-md-4" id="materialTotalQtyGroupDetail">
-            <label class="form-label form-label-sm mb-1">
-              Total Quantity (LUMPSUM)
-            </label>
-            <div class="input-group input-group-sm">
-              <input
-                type="number"
-                class="form-control"
-                name="material_total_quantity"
-                step="0.01"
-                min="0"
-                value="{% if material and material.total_quantity is not none %}{{ '%.3f'|format(material.total_quantity) }}{% endif %}"
-                placeholder="e.g. 25.5"
-              >
-              <input
-                type="text"
-                class="form-control"
-                name="material_total_quantity_unit"
-                value="{% if material and material.total_quantity_unit %}{{ material.total_quantity_unit }}{% endif %}"
-                placeholder="Unit (e.g. MT)"
-              >
-            </div>
+                  </div>
+                </div>
+              </div>
+            {% endfor %}
+
           </div>
 
-          <div class="col-md-4" id="materialTotalAmountGroupDetail">
-            <label class="form-label form-label-sm mb-1">Total Amount</label>
-            <div class="input-group input-group-sm">
-              <span class="input-group-text">₹</span>
-              <input
-                type="number"
-                class="form-control"
-                name="material_total_amount"
-                step="0.01"
-                min="0"
-                value="{% if material and material.total_amount is not none %}{{ '%.2f'|format(material.total_amount) }}{% endif %}"
-                placeholder="Lumpsum / total"
-              >
-            </div>
-          </div>
-
-          <div class="col-md-4 d-flex align-items-end justify-content-end">
-            <button
-              type="button"
-              class="btn btn-sm btn-outline-primary me-2"
-              id="btnAddMaterialRowDetail"
-              data-role="add-material-row-detail"
-            >
-              Add Row
-            </button>
-            <!-- Cancel = reload detail page, discarding unsaved edits -->
+          <div class="mt-3 d-flex justify-content-end gap-2">
             <a
-                href="{{ url_for('admin.booking_detail', booking_id=booking.id) }}"
-                class="btn btn-sm btn-outline-secondary me-2"
+              href="{{ url_for('admin.booking_detail', booking_id=booking.id) }}"
+              class="btn btn-sm btn-outline-secondary"
             >
-                Cancel
+              Cancel
             </a>
+
             <button
               type="submit"
               class="btn btn-sm btn-success"
+              {% if booking.status == 'CANCELLED' %}disabled{% endif %}
             >
-              Save Materials
+              Save Materials (All Scopes)
             </button>
           </div>
-        </div>
 
-        {# ---
-           Summary line BELOW table
-        --- #}
-        {% set ns = namespace(any_qty=False) %}
-        {% if material and material.lines %}
-          {% for line in material.lines %}
-            {% if line.quantity is not none %}
-              {% set ns.any_qty = True %}
-            {% endif %}
-          {% endfor %}
+          <div class="mt-2 small text-muted">
+            Notes:
+            <ul class="mb-0">
+              <li>ITEM: amount is computed from Qty × Rate on save (and UI keeps it locked).</li>
+              <li>LUMPSUM: use either header Total Quantity or per-line quantities (not both).</li>
+              <li>ATTACHED: use only Total Amount; lines will be canonicalized.</li>
+            </ul>
+          </div>
+
         {% endif %}
-
-        <div class="mt-2 small text-muted">
-          {% if material %}
-            {% if material.mode == 'LUMPSUM' %}
-              {% if ns.any_qty %}
-                {# Row quantities present → do NOT show header total quantity, only total amount if present #}
-                {% if material.total_amount %}
-                  <em>
-                    Lumpsum mode: per-line quantities used.
-                    Total amount recorded: ₹{{ '%.2f'|format(material.total_amount) }}.
-                  </em>
-                {% else %}
-                  <em>
-                    Lumpsum mode: per-line quantities used.
-                    Total amount not recorded.
-                  </em>
-                {% endif %}
-              {% else %}
-                {# No row quantities → header total quantity (if any) is the only quantity #}
-                {% if material.total_quantity is not none and material.total_quantity_unit %}
-                  <em>
-                    Lumpsum mode: total quantity
-                    {{ '%.3f'|format(material.total_quantity) }}
-                    {{ material.total_quantity_unit }}.
-                  </em>
-                  {% if material.total_amount %}
-                    <em>
-                      &nbsp; Total amount: ₹{{ '%.2f'|format(material.total_amount) }}.
-                    </em>
-                  {% endif %}
-                {% elif material.total_amount %}
-                  <em>
-                    Lumpsum mode: total amount recorded: ₹{{ '%.2f'|format(material.total_amount) }}.
-                  </em>
-                {% else %}
-                  <em>
-                    Lumpsum mode: no total quantity or amount recorded.
-                  </em>
-                {% endif %}
-              {% endif %}
-            {% elif material.mode == 'ITEM' %}
-              {% if material.total_amount %}
-                <em>
-                  Item-wise mode: total amount from line items
-                  ₹{{ '%.2f'|format(material.total_amount) }}.
-                </em>
-              {% else %}
-                <em>Item-wise mode: total amount not recorded.</em>
-              {% endif %}
-            {% else %}
-              <em>Material mode not set.</em>
-            {% endif %}
-          {% else %}
-            <em>No materials recorded yet.</em>
-          {% endif %}
-        </div>
-
       </form>
     </div>
   </div>
 
 </div>
 
+{% endblock %}
+
+{% block extra_scripts %}
+  {{ super() }}
+  <script src="{{ url_for('static', filename='js/booking_detail_materials.js') }}"></script>
 {% endblock %}

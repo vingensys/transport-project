@@ -1,9 +1,15 @@
 <div class="container-fluid">
 
   <h4 class="mb-3">Bookings</h4>
+  <!-- MARKER: TAB_BOOKING_MULTISCOPE_V2 -->
 
   <!-- Booking builder -->
-  <form method="POST" action="{{ url_for('admin.add_booking') }}">
+  <form
+    id="bookingBuilderForm"
+    data-role="booking-builder-form"
+    method="POST"
+    action="{{ url_for('admin.add_booking') }}"
+  >
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
     <div class="card mb-4 border-2 border-primary-subtle">
@@ -211,116 +217,71 @@
           </div>
 
           <div class="col-md-3 mb-3 text-end">
-              <!-- (Intentionally left blank: Save Booking moved to Materials section) -->    
+            <!-- (Save button is in Materials section) -->
           </div>
         </div>
 
-        <!-- Materials editor -->
         <hr class="my-3">
 
+        <!-- Materials (Multi-scope) -->
         <div class="border rounded p-3">
-          <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-3">
-            <div class="mb-2 mb-md-0">
+          <div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-2">
+            <div>
               <h5 class="mb-1">Materials</h5>
-              <small class="text-muted">
-                Every booking must include a material list. Use
-                <strong>Item-wise</strong> for Qty × Rate lines or
-                <strong>Lumpsum</strong> for summary entries.
-              </small>
-            </div>
-            <div class="ms-md-3" style="min-width: 220px;">
-              <label for="materialMode" class="form-label form-label-sm mb-1">Mode</label>
-              <select
-                class="form-select form-select-sm"
-                id="materialMode"
-                name="material_mode"
-              >
-                <option value="">-- No materials --</option>
-                <option value="ITEM">Item-wise</option>
-                <option value="LUMPSUM">Lumpsum</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- Lines table -->
-          <div class="table-responsive mb-3">
-            <table class="table table-sm table-bordered align-middle mb-0">
-              <thead class="table-light">
-                <tr class="text-center">
-                  <th style="width: 40px;">Sl.</th>
-                  <th>Description</th>
-                  <th style="width: 90px;">Unit</th>
-                  <th style="width: 90px;">Qty</th>
-                  <!-- widened -->
-                  <th style="width: 140px;">Rate</th>
-                  <th style="width: 170px;">Amount</th>
-                  <th style="width: 40px;"></th>
-                </tr>
-              </thead>
-              <tbody id="materialLinesBody">
-                <!-- JS will create rows -->
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Totals + Add Row + Save at the bottom -->
-          <div class="row g-3 align-items-end">
-            <div class="col-md-5 d-none" id="materialTotalQtyGroup">
-              <div class="row g-2">
-                <div class="col-6">
-                  <label class="form-label form-label-sm mb-1">Total Qty</label>
-                  <input
-                    type="number"
-                    class="form-control form-control-sm"
-                    name="material_total_quantity"
-                    step="0.01"
-                    min="0"
-                    placeholder="e.g. 25.5"
-                  >
-                </div>
-                <div class="col-6">
-                  <label class="form-label form-label-sm mb-1">Unit</label>
-                  <input
-                    type="text"
-                    class="form-control form-control-sm"
-                    name="material_total_quantity_unit"
-                    maxlength="20"
-                    placeholder="e.g. MT"
-                  >
-                </div>
+              <div class="small text-muted">
+                Each scope below corresponds to a FROM → TO authority pair.
               </div>
             </div>
-
-            <div class="col-md-3">
-              <label class="form-label form-label-sm mb-1">Total Amount</label>
-              <input
-                type="number"
-                class="form-control form-control-sm"
-                name="material_total_amount"
-                step="0.01"
-                min="0"
-                placeholder="Auto / lumpsum"
-              >
-            </div>
-
-            <div class="col-md-4 text-md-end">
-              <button
-                type="button"
-                class="btn btn-sm btn-outline-secondary me-2"
-                id="btnAddMaterialRow"
-              >
-                Add Row
-              </button>
-
-              <!-- New position for Save Booking -->
-              <button
-                type="submit"
-                class="btn btn-primary btn-sm"
-              >
-                Save Booking
-              </button>
-            </div>
           </div>
+
+          <!-- Scopes accordion (JS builds one section per scope) -->
+          <div
+            class="accordion"
+            id="materialsScopesAccordion"
+            data-role="materials-scopes-accordion"
+          ></div>
+
+          <!-- Empty state hint (JS may toggle visibility) -->
+          <div class="text-muted small mt-2" id="materialsScopesEmptyHint">
+            Select authorities on FROM and DESTINATION to generate scope material tables.
+          </div>
+
+          <div
+            id="materialsScopesError"
+            class="text-danger small mt-2 d-none"
+            data-role="materials-scopes-error"
+          >
+            Please complete all scope material tables.
+          </div>
+
+          <input
+            type="hidden"
+            name="materials_scopes_json"
+            id="materialsScopesJSON"
+            data-role="materials-scopes-json"
+          >
+          <!-- Hidden BACKEND BASE MATERIAL TABLE (legacy field names only) -->
+          <div class="d-none" id="backendBaseMaterialsContainer" aria-hidden="true">
+            <select name="material_mode" id="backend_material_mode" required>
+              <option value=""></option>
+              <option value="ITEM"></option>
+              <option value="LUMPSUM"></option>
+              <option value="ATTACHED"></option>
+            </select>
+
+            <input type="text" name="material_total_quantity" id="backend_material_total_quantity">
+            <input type="text" name="material_total_quantity_unit" id="backend_material_total_quantity_unit">
+            <input type="text" name="material_total_amount" id="backend_material_total_amount">
+
+            <div id="backendLinesHost"></div>
+          </div>
+        </div>
+        <!-- /Materials -->
+        
+        <div class="d-flex justify-content-end mt-3">
+          <button type="submit" id="btnSaveBooking" class="btn btn-primary">
+            Save Booking
+          </button>
         </div>
 
       </div>
@@ -541,5 +502,5 @@
   window.BOOKING_AUTH_BY_CODE = {{ booking_auth_map|tojson }};
   window.FLASK_QUICK_ADD_AUTHORITY_URL = "{{ url_for('admin.quick_add_authority') }}";
   window.FLASK_BOOKING_MATERIALS_URL_TEMPLATE =
-    "{{ url_for('admin.booking_materials_json', booking_id=0) | replace('0', '__ID__') }}";
+  "{{ url_for('admin.booking_materials_per_authority_json', booking_id=0) | replace('0', '__ID__') }}";
 </script>
