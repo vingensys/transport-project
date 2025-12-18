@@ -80,6 +80,16 @@ def _is_pdf_filename(name: str) -> bool:
     return name.lower().endswith(".pdf")
 
 
+def booking_has_home_authority(booking: Booking) -> bool:
+    cfg = AppConfig.query.order_by(AppConfig.id.desc()).first()
+    if not cfg or not cfg.home_authority_id:
+        return False
+    return any(
+        ba.authority_id == cfg.home_authority_id
+        for ba in (booking.booking_authorities or [])
+    )
+
+
 # =============================================================================
 # Fonts
 # =============================================================================
@@ -193,13 +203,11 @@ def _fmt_money(v: Optional[float]) -> str:
 
 def _clean_filename_keep_spaces(name: str, max_len: int = 160) -> str:
     """
-    Keep spaces (user wanted), but strip characters that can break headers/paths.
+    Keep spaces, but strip characters that can break headers/paths.
     Also collapse repeated whitespace.
     """
     s = (name or "").strip()
-    # Replace forbidden filename chars with space
     s = re.sub(r'[\\/:*?"<>|]+', " ", s)
-    # Collapse whitespace
     s = re.sub(r"\s+", " ", s).strip()
     if len(s) > max_len:
         s = s[:max_len].rstrip()
@@ -218,9 +226,7 @@ def _download_name_for_placement(snapshot: Dict[str, Any]) -> str:
             code = (ba.authority.location.code or "").strip()
             if code:
                 return code
-        # fallback
         return _authority_designation(ba)
-
 
     from_parts = [_loc_label(ba) for ba in loading if ba]
     to_parts = [_loc_label(ba) for ba in unloading if ba]
@@ -228,7 +234,11 @@ def _download_name_for_placement(snapshot: Dict[str, Any]) -> str:
     from_str = " ".join([p for p in from_parts if p]) or "FROM"
     to_str = " ".join([p for p in to_parts if p]) or "TO"
 
-    placement_dt = booking.placement_date.strftime("%d-%m-%Y") if booking.placement_date else _fmt_date_ddmmyyyy(snapshot["letter_date"])
+    placement_dt = (
+        booking.placement_date.strftime("%d-%m-%Y")
+        if booking.placement_date
+        else _fmt_date_ddmmyyyy(snapshot["letter_date"])
+    )
 
     raw = f"{trip_serial} - {from_str} to {to_str} on {placement_dt}.pdf"
     return _clean_filename_keep_spaces(raw)
@@ -255,9 +265,8 @@ def _infer_traffic_direction_from_home_role(booking: Booking) -> Optional[str]:
 def compute_far_end_authorities_and_action(booking: Booking) -> Tuple[List[BookingAuthority], str]:
     """
     Returns (far_end_authorities, action).
-    Rule:
-      - INBOUND  -> far end is LOADING authorities; action = 'load'
-      - OUTBOUND -> far end is UNLOADING authorities; action = 'unload'
+      - INBOUND  -> far end is LOADING authorities; action='load'
+      - OUTBOUND -> far end is UNLOADING authorities; action='unload'
     """
     direction = _infer_traffic_direction_from_home_role(booking) or "INBOUND"
 
@@ -370,9 +379,15 @@ def _material_table_style_common(grid: bool = True) -> List[Tuple]:
         ("ALIGN", (0, 0), (0, -1), "CENTER"),
         ("VALIGN", (0, 1), (0, -1), "MIDDLE"),
 
-        # Description left (body)
+        # Description left
         ("ALIGN", (1, 1), (1, -1), "LEFT"),
         ("VALIGN", (1, 1), (1, -1), "TOP"),
+
+        # Qty column centered (body)
+        ("ALIGN", (2, 1), (2, -1), "CENTER"),
+
+        # Right align last numeric columns generally (safe for item/lumpsum/attached)
+        ("ALIGN", (-1, 1), (-1, -1), "RIGHT"),
     ]
     return cmds
 
@@ -396,7 +411,13 @@ def _render_material_table_item(
     lines = sorted(mt.lines or [], key=lambda x: x.sequence_index or 0)
 
     if not lines:
-        rows.append(["1", Paragraph("-", normal), Paragraph("", center), Paragraph("", money_right), Paragraph("", money_right)])
+        rows.append([
+            "1",
+            Paragraph("-", normal),
+            Paragraph("", center),
+            Paragraph("", money_right),
+            Paragraph("", money_right),
+        ])
     else:
         for i, ln in enumerate(lines, start=1):
             if ln.amount is not None:
@@ -443,6 +464,7 @@ def _render_material_table_lumpsum(
     lines = sorted(mt.lines or [], key=lambda x: x.sequence_index or 0)
     any_line_qty = any((ln.quantity is not None) for ln in lines)
 
+    # If no lines at all, still show total qty + amount
     if not lines:
         qty_cell = _fmt_qty_unit(mt.total_quantity, mt.total_quantity_unit) if not any_line_qty else ""
         rows.append([
@@ -455,10 +477,15 @@ def _render_material_table_lumpsum(
         tbl.setStyle(TableStyle(_material_table_style_common()))
         return tbl
 
-    # Put total amount in first row so merged cell isn't blank
+    # IMPORTANT: If header total qty is used (no per-line qty),
+    # put the qty text into the first body row NOW (before Table is created),
+    # so merged cell shows it.
+    header_qty_text = _fmt_qty_unit(mt.total_quantity, mt.total_quantity_unit) if not any_line_qty else ""
+
     for i, ln in enumerate(lines, start=1):
-        qty_cell = _fmt_qty_unit(ln.quantity, ln.unit) if any_line_qty else ""
-        amt_cell = _fmt_money(mt.total_amount) if i == 1 else ""
+        qty_cell = _fmt_qty_unit(ln.quantity, ln.unit) if any_line_qty else (header_qty_text if i == 1 else "")
+        amt_cell = _fmt_money(mt.total_amount) if i == 1 else ""  # merged Amount cell anchored at first row
+
         rows.append([
             str(i),
             Paragraph((ln.description or "").replace("\n", "<br/>"), normal),
@@ -473,17 +500,15 @@ def _render_material_table_lumpsum(
 
     style_cmds = _material_table_style_common()
 
-    # merge Amount always if >1 row
+    # Merge Amount always if >1 row
     if len(lines) > 1:
         style_cmds.append(("SPAN", (3, body_start), (3, body_end)))
         style_cmds.append(("VALIGN", (3, body_start), (3, body_end), "MIDDLE"))
 
-    # merge Qty if header total is used (no line qty)
-    if not any_line_qty:
-        rows[body_start][2] = Paragraph(_fmt_qty_unit(mt.total_quantity, mt.total_quantity_unit), center)
-        if len(lines) > 1:
-            style_cmds.append(("SPAN", (2, body_start), (2, body_end)))
-            style_cmds.append(("VALIGN", (2, body_start), (2, body_end), "MIDDLE"))
+    # Merge Qty column if header total qty is used (no per-line qty)
+    if not any_line_qty and len(lines) > 1:
+        style_cmds.append(("SPAN", (2, body_start), (2, body_end)))
+        style_cmds.append(("VALIGN", (2, body_start), (2, body_end), "MIDDLE"))
 
     tbl.setStyle(TableStyle(style_cmds))
     return tbl
@@ -501,7 +526,11 @@ def _render_material_table_attached(
 
     rows: List[List[Any]] = []
     rows.append([Paragraph(h, bold) for h in header])
-    rows.append(["1", Paragraph("As per list attached", normal), Paragraph(_fmt_money(mt.total_amount), money_right)])
+    rows.append([
+        "1",
+        Paragraph("As per list attached", normal),
+        Paragraph(_fmt_money(mt.total_amount), money_right),
+    ])
 
     tbl = Table(rows, colWidths=cols, repeatRows=1)
     tbl.setStyle(TableStyle(_material_table_style_common()))
@@ -625,21 +654,22 @@ def generate_placement_advice_pdf(snapshot: Dict[str, Any], out_path: Path) -> N
     story.append(Paragraph(f"{booking.company.address}", bold))
     story.append(Spacer(1, 10))
 
-    # Sub/Ref table
+    # Sub/Ref table (WRAPPING FIX)
+    sub_ref_rows = [
+        [Paragraph("Sub", bold), Paragraph(":", bold), Paragraph("Placement of Lorry for transportation of material – reg.", bold)],
+        [Paragraph("Ref", bold), Paragraph(":", bold), Paragraph(f"LOA No. {ag.loa_number}", normal)],
+    ]
     sub_ref_tbl = Table(
-        [
-            ["Sub", ":", "Placement of Lorry for transportation of material – reg."],
-            ["Ref", ":", f"LOA No. {ag.loa_number}"],
-        ],
+        sub_ref_rows,
         colWidths=[22 * mm, 8 * mm, doc.width - (22 * mm + 8 * mm)],
     )
     sub_ref_tbl.setStyle(TableStyle(_table_base_style() + [
-        ("FONTNAME", (0, 0), (1, -1), "Verdana-Bold"),
-        ("FONTNAME", (2, 0), (2, 0), "Verdana-Bold"),
         ("ALIGN", (0, 0), (0, -1), "RIGHT"),
         ("ALIGN", (1, 0), (1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
         ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("WORDWRAP", (2, 0), (2, -1), "CJK"),
     ]))
     story.append(sub_ref_tbl)
     story.append(Spacer(1, 10))
@@ -692,7 +722,8 @@ def generate_placement_advice_pdf(snapshot: Dict[str, Any], out_path: Path) -> N
 
             from_ba = mt.booking_authority
             meet_desig = _authority_designation(from_ba) if from_ba else "-"
-            story.append(Paragraph(f"Authority to meet for collection : {meet_desig}", bold))  # BOLD LINE
+            # only designation should appear, and be bold
+            story.append(Paragraph(f"Authority to meet for collection : {meet_desig}", bold))
             story.append(Spacer(1, 12))
 
     # Signature block bold
@@ -702,36 +733,86 @@ def generate_placement_advice_pdf(snapshot: Dict[str, Any], out_path: Path) -> N
     story.append(Paragraph("For Sr.DEE/RS/ED", right_bold))
     story.append(Spacer(1, 12))
 
-    # C/- block with MULTIPLE far-end authorities
-    far_end_bas: List[BookingAuthority] = snapshot.get("far_end_bas") or []
-    far_action: str = snapshot.get("far_end_action") or "load"
-
+    # C/- block
     story.append(Paragraph("C/-", bold))
     story.append(Spacer(1, 4))
 
     cc_rows: List[List[Any]] = []
 
-    if far_end_bas:
-        for ba in far_end_bas:
-            desig = _authority_designation(ba) or "Far End Authority"
+    if booking_has_home_authority(booking):
+        # Per far-end authority key/value pair
+        far_end_bas: List[BookingAuthority] = snapshot.get("far_end_bas") or []
+        far_action: str = snapshot.get("far_end_action") or "load"
+
+        if far_end_bas:
+            for ba in far_end_bas:
+                desig = _authority_designation(ba) or "Far End Authority"
+                cc_rows.append([
+                    Paragraph(f"{desig} :", bold),
+                    Paragraph(
+                        f"For kind information & requested to arrange to {far_action} the materials "
+                        f"in the Lorry placed by the above-mentioned contractor.",
+                        normal,
+                    ),
+                ])
+        else:
             cc_rows.append([
-                Paragraph(f"{desig} :", bold),
+                Paragraph("Far End Authority :", bold),
                 Paragraph(
-                    f"For kind information & requested to arrange to {far_action} the materials of ELS/ED "
+                    f"For kind information & requested to arrange to {far_action} the materials "
                     f"in the Lorry placed by the above-mentioned contractor.",
                     normal,
                 ),
             ])
-    else:
-        cc_rows.append([
-            Paragraph("Far End Authority :", bold),
-            Paragraph(
-                f"For kind information & requested to arrange to {far_action} the materials of ELS/ED "
-                f"in the Lorry placed by the above-mentioned contractor.",
-                normal,
-            ),
-        ])
 
+    else:
+        # No home authority: separate rows for LOADING and UNLOADING (generic wording)
+        loading_bas: List[BookingAuthority] = snapshot.get("loading") or []
+        unloading_bas: List[BookingAuthority] = snapshot.get("unloading") or []
+
+        if loading_bas:
+            for ba in loading_bas:
+                desig = _authority_designation(ba) or "Loading Authority"
+                cc_rows.append([
+                    Paragraph(f"{desig} :", bold),
+                    Paragraph(
+                        "For kind information & requested to arrange to load the materials in the Lorry placed "
+                        "by the above-mentioned contractor.",
+                        normal,
+                    ),
+                ])
+        else:
+            cc_rows.append([
+                Paragraph("Loading Authority :", bold),
+                Paragraph(
+                    "For kind information & requested to arrange to load the materials in the Lorry placed "
+                    "by the above-mentioned contractor.",
+                    normal,
+                ),
+            ])
+
+        if unloading_bas:
+            for ba in unloading_bas:
+                desig = _authority_designation(ba) or "Unloading Authority"
+                cc_rows.append([
+                    Paragraph(f"{desig} :", bold),
+                    Paragraph(
+                        "For kind information & requested to arrange to unload the materials in the Lorry placed "
+                        "by the above-mentioned contractor.",
+                        normal,
+                    ),
+                ])
+        else:
+            cc_rows.append([
+                Paragraph("Unloading Authority :", bold),
+                Paragraph(
+                    "For kind information & requested to arrange to unload the materials in the Lorry placed "
+                    "by the above-mentioned contractor.",
+                    normal,
+                ),
+            ])
+
+    # Static rows
     cc_rows += [
         [Paragraph("SSE/G/ELS/ED :", bold), Paragraph("For necessary follow up action please.", normal)],
         [Paragraph("SSE/Stores/ELS/ED :", bold), Paragraph("For information please.", normal)],
@@ -741,6 +822,8 @@ def generate_placement_advice_pdf(snapshot: Dict[str, Any], out_path: Path) -> N
     cc_tbl.setStyle(TableStyle(_table_base_style() + [
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
         ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("WORDWRAP", (1, 0), (1, -1), "CJK"),
     ]))
     story.append(cc_tbl)
 

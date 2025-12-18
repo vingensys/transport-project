@@ -316,97 +316,214 @@ if (window.__BOOKING_JS_INITED__) {
       syncHomeLocation();
     })();
 
-    // ========================================
-    // Authority Picker Modal Logic
-    // ========================================
-    const modalEl = document.getElementById("authorityPickerModal");
-    const authorityModal = modalEl ? new bootstrap.Modal(modalEl) : null;
+   // ========================================
+// Authority Picker Modal Logic (DROP-IN)
+// ========================================
+const modalEl = document.getElementById("authorityPickerModal");
+const authorityModal = modalEl ? new bootstrap.Modal(modalEl) : null;
 
-    let currentLi = null;
+let currentLi = null;
 
-    document.addEventListener("click", function (e) {
-      const btn = e.target.closest("button[data-role='open-authority-picker']");
-      if (!btn) return;
-      if (!authorityModal) return;
+function getSelectedAuthorityIds(currentLi) {
+  const selectedContainer = currentLi.querySelector("[data-role='selected-authorities']");
+  if (!selectedContainer) return [];
+  return Array.from(selectedContainer.querySelectorAll("input[type='hidden']")).map((h) => h.value);
+}
 
-      const code = btn.dataset.code;
-      const side = btn.dataset.side;
-      currentLi = btn.closest("li");
+function renderAuthorityPickerList({ code, side, existingIds }) {
+  const authListDiv = document.getElementById("authorityPickerList");
+  const emptyDiv = document.getElementById("authorityPickerEmpty");
+  if (!authListDiv || !emptyDiv) return;
 
-      const authListDiv = document.getElementById("authorityPickerList");
-      const emptyDiv = document.getElementById("authorityPickerEmpty");
-      authListDiv.innerHTML = "";
+  authListDiv.innerHTML = "";
 
-      const list = BOOKING_AUTH_BY_CODE[code] || [];
+  const list = BOOKING_AUTH_BY_CODE[code] || [];
 
-      const selectedContainer = currentLi.querySelector("[data-role='selected-authorities']");
-      const existingIds = Array.from(selectedContainer.querySelectorAll("input[type='hidden']")).map(
-        (h) => h.value
-      );
+  if (!list.length) {
+    emptyDiv.classList.remove("d-none");
+    return;
+  }
 
-      if (!list.length) {
-        emptyDiv.classList.remove("d-none");
-      } else {
-        emptyDiv.classList.add("d-none");
-        list.forEach(function (a) {
-          const checkWrapper = document.createElement("div");
-          checkWrapper.className = "form-check";
+  emptyDiv.classList.add("d-none");
 
-          const cb = document.createElement("input");
-          cb.type = "checkbox";
-          cb.className = "form-check-input";
-          cb.id = `auth-${side}-${code}-${a.id}`;
-          cb.dataset.authId = a.id;
-          if (existingIds.includes(String(a.id))) cb.checked = true;
+  list.forEach(function (a) {
+    const checkWrapper = document.createElement("div");
+    checkWrapper.className = "form-check";
 
-          const label = document.createElement("label");
-          label.className = "form-check-label ms-2";
-          label.setAttribute("for", cb.id);
-          label.textContent = a.title;
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "form-check-input";
+    cb.id = `auth-${side}-${code}-${a.id}`;
+    cb.dataset.authId = a.id;
 
-          checkWrapper.appendChild(cb);
-          checkWrapper.appendChild(label);
-          authListDiv.appendChild(checkWrapper);
-        });
+    if (existingIds.includes(String(a.id))) cb.checked = true;
+
+    const label = document.createElement("label");
+    label.className = "form-check-label ms-2";
+    label.setAttribute("for", cb.id);
+    label.textContent = a.title;
+
+    checkWrapper.appendChild(cb);
+    checkWrapper.appendChild(label);
+    authListDiv.appendChild(checkWrapper);
+  });
+}
+
+document.addEventListener("click", function (e) {
+  const btn = e.target.closest("button[data-role='open-authority-picker']");
+  if (!btn) return;
+  if (!authorityModal) return;
+
+  const code = btn.dataset.code;
+  const side = btn.dataset.side;
+  currentLi = btn.closest("li");
+
+  if (!currentLi) return;
+
+  const existingIds = getSelectedAuthorityIds(currentLi);
+
+  // Clear status + inputs each time modal opens (optional but nice)
+  const statusEl = document.getElementById("newAuthorityStatus");
+  const titleEl = document.getElementById("newAuthorityTitle");
+  const addrEl = document.getElementById("newAuthorityAddress");
+  if (statusEl) statusEl.textContent = "";
+  if (titleEl) titleEl.value = "";
+  if (addrEl) addrEl.value = "";
+
+  renderAuthorityPickerList({ code, side, existingIds });
+
+  authorityModal.show();
+});
+
+const applyBtn = document.getElementById("applyAuthoritySelection");
+if (applyBtn) {
+  applyBtn.addEventListener("click", function () {
+    if (!currentLi) return;
+
+    const side = currentLi.dataset.side;
+    const code = currentLi.dataset.code;
+
+    const container = currentLi.querySelector("[data-role='selected-authorities']");
+    if (!container) return;
+
+    container.innerHTML = "";
+
+    const selectedTitles = [];
+
+    document
+      .querySelectorAll("#authorityPickerList input[type='checkbox']")
+      .forEach(function (cb) {
+        if (cb.checked) {
+          const hidden = document.createElement("input");
+          hidden.type = "hidden";
+          hidden.value = cb.dataset.authId;
+          hidden.name = side === "LOADING" ? `loading_${code}[]` : `unloading_${code}[]`;
+          container.appendChild(hidden);
+
+          const label = cb.closest(".form-check")?.querySelector(".form-check-label");
+          if (label) selectedTitles.push(label.textContent.trim());
+        }
+      });
+
+    const summaryDiv = currentLi.querySelector("[data-role='authority-summary']");
+    if (summaryDiv) summaryDiv.textContent = selectedTitles.length ? selectedTitles.join(", ") : "None selected";
+
+    authorityModal.hide();
+
+    scheduleScopesRebuild(); // scopes changed
+  });
+}
+
+// ========================================
+// Add new authority inside picker modal (COMPLETE REPLACEMENT)
+// ========================================
+const btnAddAuthority = document.getElementById("btnAddAuthority");
+if (btnAddAuthority) {
+  btnAddAuthority.addEventListener("click", async function () {
+    const statusEl = document.getElementById("newAuthorityStatus");
+    const titleEl = document.getElementById("newAuthorityTitle");
+    const addrEl = document.getElementById("newAuthorityAddress");
+
+    if (!currentLi) return;
+
+    const code = (currentLi.dataset.code || "").trim().toUpperCase();
+    const side = currentLi.dataset.side;
+
+    const title = (titleEl?.value || "").trim();
+    const address = (addrEl?.value || "").trim();
+
+    if (!title) {
+      if (statusEl) statusEl.textContent = "Designation is required.";
+      return;
+    }
+
+    const url = window.FLASK_QUICK_ADD_AUTHORITY_URL;
+    if (!url) {
+      console.error("Missing window.FLASK_QUICK_ADD_AUTHORITY_URL bridge from template.");
+      if (statusEl) statusEl.textContent = "Internal error: add-authority URL not configured.";
+      return;
+    }
+
+    btnAddAuthority.disabled = true;
+    if (statusEl) statusEl.textContent = "Adding...";
+
+    try {
+      const payload = {
+        location_code: code,
+        title: title,
+        address: address || "",
+      };
+
+      const resp = await fetch(url, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "X-CSRFToken": window.CSRF_TOKEN,
+          "X-CSRF-Token": window.CSRF_TOKEN,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await resp.json().catch(() => null);
+
+      if (!resp.ok || !data || !data.success) {
+        const msg = (data && data.error) || `Failed (${resp.status})`;
+        if (statusEl) statusEl.textContent = msg;
+        return;
       }
 
-      authorityModal.show();
-    });
+      const a = data.authority; // { id, title, location_code }
+      if (!a || !a.id) {
+        if (statusEl) statusEl.textContent = "Unexpected response from server.";
+        return;
+      }
 
-    const applyBtn = document.getElementById("applyAuthoritySelection");
-    if (applyBtn) {
-      applyBtn.addEventListener("click", function () {
-        if (!currentLi) return;
+      // Update global cache used by picker
+      if (!BOOKING_AUTH_BY_CODE[code]) BOOKING_AUTH_BY_CODE[code] = [];
+      BOOKING_AUTH_BY_CODE[code].push({ id: a.id, title: a.title });
 
-        const side = currentLi.dataset.side;
-        const code = currentLi.dataset.code;
+      // Re-render list, keeping existing selections + auto-select new one
+      const existingIds = getSelectedAuthorityIds(currentLi);
+      existingIds.push(String(a.id));
 
-        const container = currentLi.querySelector("[data-role='selected-authorities']");
-        container.innerHTML = "";
+      renderAuthorityPickerList({ code, side, existingIds });
 
-        const selectedTitles = [];
-
-        document.querySelectorAll("#authorityPickerList input[type='checkbox']").forEach(function (cb) {
-          if (cb.checked) {
-            const hidden = document.createElement("input");
-            hidden.type = "hidden";
-            hidden.value = cb.dataset.authId;
-            hidden.name = side === "LOADING" ? `loading_${code}[]` : `unloading_${code}[]`;
-            container.appendChild(hidden);
-
-            const label = cb.closest(".form-check").querySelector(".form-check-label");
-            if (label) selectedTitles.push(label.textContent.trim());
-          }
-        });
-
-        const summaryDiv = currentLi.querySelector("[data-role='authority-summary']");
-        summaryDiv.textContent = selectedTitles.length ? selectedTitles.join(", ") : "None selected";
-
-        authorityModal.hide();
-
-        scheduleScopesRebuild(); // scopes changed
-      });
+      // Clear inputs + status
+      if (titleEl) titleEl.value = "";
+      if (addrEl) addrEl.value = "";
+      if (statusEl) statusEl.textContent = "Added (selected).";
+    } catch (err) {
+      console.error(err);
+      if (statusEl) statusEl.textContent = "Error while adding authority.";
+    } finally {
+      btnAddAuthority.disabled = false;
     }
+  });
+}
+
+
 
     // ========================================
     // Booking Details Modal (with materials) - UPDATED for multi-scope

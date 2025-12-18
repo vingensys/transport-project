@@ -368,10 +368,13 @@
   </div>
 </div>
 
+<div id="dashboard-root" data-default-tab="{{ request.args.get('tab', '') }}"></div>
+
 {% endblock %}
 
 {% block extra_scripts %}
   {{ super() }}
   <script src="{{ url_for('static', filename='js/route.js') }}"></script>
   <script src="{{ url_for('static', filename='js/location.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/dashboard_tabs.js') }}"></script>
 {% endblock %}

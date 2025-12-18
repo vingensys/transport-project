@@ -228,6 +228,14 @@ def _compute_agreement_overview(agreement: Agreement):
 
 @admin_bp.route("/")
 def dashboard():
+    # Default landing: Overview tab (use query param; hash is not sent to server)
+    tab = (request.args.get("tab") or "").strip().lower()
+    if not tab:
+        args = request.args.to_dict(flat=True)
+        args["tab"] = "overview"
+        return redirect(url_for("admin.dashboard", **args))
+
+
     # Core master data for tabs
     companies = Company.query.order_by(Company.id.desc()).all()
     agreements = Agreement.query.order_by(Agreement.id.desc()).all()
