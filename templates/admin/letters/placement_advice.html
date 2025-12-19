@@ -6,15 +6,22 @@
   <div class="d-flex justify-content-between align-items-start mb-3">
     <div>
       <h5 class="mb-1">
-        Generate Placement Advice — Booking #{{ booking.id }}
+        {% if baseline_letter %}
+          Placement Advice — Booking #{{ booking.id }}
+        {% else %}
+          Generate Placement Advice — Booking #{{ booking.id }}
+        {% endif %}
       </h5>
       <div class="small text-muted">
-        Create Placement Advice PDF for this booking.
+        {% if baseline_letter %}
+          Issued Placement Advice and Modification Advice (if required).
+        {% else %}
+          Create Placement Advice PDF for this booking.
+        {% endif %}
       </div>
     </div>
 
     <div class="d-flex gap-2">
-      {# Back to History (preserve filters if present) #}
       <a
         href="{{ url_for('admin.dashboard',
                          booking_scope=request.args.get('booking_scope'),
@@ -25,7 +32,6 @@
         ← Back to History
       </a>
 
-      {# Back to Booking Detail #}
       <a
         href="{{ url_for('admin.booking_detail',
                          booking_id=booking.id,
@@ -49,6 +55,15 @@
 
     <div class="card-body">
 
+      {% if baseline_letter %}
+        <div class="alert alert-success mb-3">
+          <strong>Placement Advice already issued.</strong>
+          <div class="small mt-1">
+            Letter Date: {{ baseline_letter.letter_date.strftime('%d-%m-%Y') if baseline_letter.letter_date else '-' }}
+          </div>
+        </div>
+      {% endif %}
+
       <div class="row mb-3">
         <div class="col-md-3">
           <label class="form-label">Letter Date</label>
@@ -56,18 +71,23 @@
             type="date"
             name="letter_date"
             class="form-control"
-            value="{{ default_letter_date }}"
+            value="{% if booking.placement_date %}{{ booking.placement_date.isoformat() }}{% else %}{{ default_letter_date }}{% endif %}"
             required
           >
           <div class="form-text">
-            Used in the generated PDF.
+            {% if baseline_letter %}
+              Date of the Modification Advice (if generated).
+            {% else %}
+              Used in the generated Placement Advice PDF.
+            {% endif %}
           </div>
         </div>
       </div>
 
       {% if requires_attachment %}
         <div class="alert alert-warning">
-          This booking contains <strong>ATTACHED</strong> material scope(s). Please upload the material list PDF to be appended.
+          This booking contains <strong>ATTACHED</strong> material scope(s).
+          Please upload the material list PDF to be appended to the issued Placement Advice.
         </div>
 
         <div class="row mb-3">
@@ -81,6 +101,26 @@
               required
             >
           </div>
+        </div>
+      {% endif %}
+
+      {% if baseline_letter %}
+        <div class="mt-2">
+          {% if baseline_has_snapshot %}
+            {% if changes_detected %}
+              <span class="badge bg-warning text-dark">
+                Changes detected since issued Placement Advice
+              </span>
+            {% else %}
+              <span class="badge bg-secondary">
+                No changes detected since issued Placement Advice
+              </span>
+            {% endif %}
+          {% else %}
+            <span class="badge bg-info text-dark">
+              Change detection not available for this issued letter
+            </span>
+          {% endif %}
         </div>
       {% endif %}
 
@@ -99,19 +139,31 @@
       </a>
 
       <div class="d-flex gap-2">
-        <a
-          href="{{ url_for('admin.booking_detail',
-                           booking_id=booking.id,
-                           booking_scope=request.args.get('booking_scope'),
-                           booking_status=request.args.get('booking_status'),
-                           booking_search=request.args.get('booking_search')) }}"
-          class="btn btn-secondary"
-        >
-          Cancel
-        </a>
-        <button class="btn btn-primary">
-          Generate Placement Advice
-        </button>
+
+        {% if baseline_letter %}
+          <a
+            href="{{ url_for('admin.generate_placement_advice', booking_id=booking.id, download=1) }}"
+            class="btn btn-outline-primary"
+          >
+            Download Placement Advice
+          </a>
+
+          {% if baseline_has_snapshot and changes_detected %}
+            <button class="btn btn-warning">
+              Generate Modification Advice
+            </button>
+          {% else %}
+            <button class="btn btn-warning" disabled>
+              Generate Modification Advice
+            </button>
+          {% endif %}
+
+        {% else %}
+          <button class="btn btn-primary">
+            Generate Placement Advice
+          </button>
+        {% endif %}
+
       </div>
     </div>
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import re
+import re, hashlib, json
 from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -332,6 +332,93 @@ def build_snapshot(booking: Booking, letter_date: date) -> Dict[str, Any]:
         "far_end_bas": far_end_bas,
         "far_end_action": far_end_action,
     }
+
+# =============================================================================
+# Canonical snapshot + hashing (for change detection)
+# =============================================================================
+
+def _canon_authority(ba: Optional[BookingAuthority]) -> Dict[str, Any]:
+    if not ba or not ba.authority:
+        return {"authority_id": None, "role": None, "sequence_index": None, "title": "-", "location_code": ""}
+    loc_code = ""
+    if getattr(ba.authority, "location", None):
+        loc_code = (ba.authority.location.code or "").strip()
+    return {
+        "authority_id": ba.authority_id,
+        "role": (ba.role or "").upper(),
+        "sequence_index": ba.sequence_index or 0,
+        "title": ba.authority.authority_title or "-",
+        "location_code": loc_code,
+    }
+
+
+def _canon_material_table(mt: BookingMaterial) -> Dict[str, Any]:
+    lines = sorted((mt.lines or []), key=lambda x: x.sequence_index or 0)
+    return {
+        "id": mt.id,
+        "sequence_index": mt.sequence_index or 0,
+        "booking_authority_id": mt.booking_authority_id,
+        "mode": ((mt.mode or "").upper().strip() or "ITEM"),
+        "total_quantity": mt.total_quantity,
+        "total_quantity_unit": (mt.total_quantity_unit or "").strip(),
+        "total_amount": mt.total_amount,
+        "lines": [
+            {
+                "sequence_index": ln.sequence_index or 0,
+                "description": (ln.description or "").strip(),
+                "unit": (ln.unit or "").strip(),
+                "quantity": ln.quantity,
+                "rate": ln.rate,
+                "amount": ln.amount,
+            }
+            for ln in lines
+        ],
+    }
+
+
+def build_canonical_snapshot_for_placement(booking: Booking, letter_date_val: date) -> Dict[str, Any]:
+    ag = booking.agreement
+    trip_serial = compute_trip_serial(booking)
+
+    loading = sorted(
+        [ba for ba in (booking.booking_authorities or []) if (ba.role or "").upper() == "LOADING"],
+        key=lambda x: x.sequence_index or 0,
+    )
+    unloading = sorted(
+        [ba for ba in (booking.booking_authorities or []) if (ba.role or "").upper() == "UNLOADING"],
+        key=lambda x: x.sequence_index or 0,
+    )
+
+    mts = sorted((booking.material_tables or []), key=lambda m: ((m.sequence_index or 0), (m.id or 0)))
+
+    return {
+        "booking_id": booking.id,
+        "agreement_id": booking.agreement_id,
+        "trip_serial": trip_serial,
+        "letter_date": letter_date_val.isoformat(),
+        "placement_date": booking.placement_date.isoformat() if booking.placement_date else None,
+        "loa_number": (ag.loa_number if ag else None),
+        "placement_ref_prefix": (ag.placement_ref_prefix if ag else None),
+        "company_name": (booking.company.name if booking.company else None),
+        "route_id": booking.route_id,
+        "route_total_km": (booking.route.total_km if booking.route else None),
+        "lorry_capacity": (booking.lorry.capacity if booking.lorry else None),
+        "lorry_carrier_size": (booking.lorry.carrier_size if booking.lorry else None),
+        "loading": [_canon_authority(ba) for ba in loading],
+        "unloading": [_canon_authority(ba) for ba in unloading],
+        "materials": [_canon_material_table(mt) for mt in mts],
+        "requires_attachment": booking_requires_attachment_pdf(booking),
+    }
+
+
+def _hash_canonical_snapshot(payload: Dict[str, Any]) -> str:
+    # IMPORTANT: letter_date is NOT part of "booking changed?" detection.
+    # It is only the issue date of the document.
+    clean = dict(payload or {})
+    clean.pop("letter_date", None)
+
+    s = json.dumps(clean, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
 # =============================================================================
@@ -830,6 +917,257 @@ def generate_placement_advice_pdf(snapshot: Dict[str, Any], out_path: Path) -> N
     doc.build(story, canvasmaker=FooterCanvas)
 
 
+def _build_mod_ref_no(prefix: str, trip_serial: int, mod_seq: int) -> str:
+    p = (prefix or "").strip().strip("/")
+    return f"No.{p}/Transport/Placement/Mod/{trip_serial}/{mod_seq}"
+
+
+def _safe_text(v: Any) -> str:
+    if v is None:
+        return "-"
+    if isinstance(v, (int, float)):
+        return str(v)
+    return str(v).strip() or "-"
+
+
+def _summarize_authority_list(canon_list: List[Dict[str, Any]]) -> str:
+    if not canon_list:
+        return "-"
+    parts = []
+    for a in canon_list:
+        code = (a.get("location_code") or "").strip()
+        title = (a.get("title") or "-").strip()
+        parts.append(code or title)
+    return ", ".join(parts) if parts else "-"
+
+
+def _summarize_materials(canon_mts: List[Dict[str, Any]]) -> str:
+    if not canon_mts:
+        return "-"
+    chunks = []
+    for mt in canon_mts:
+        mode = mt.get("mode") or "ITEM"
+        amt = mt.get("total_amount")
+        qty = mt.get("total_quantity")
+        qu = (mt.get("total_quantity_unit") or "").strip()
+        qty_txt = _fmt_qty_unit(qty, qu)
+        chunks.append(f"{mode} | Qty: {qty_txt or '-'} | Amt: {_safe_text(amt)}")
+    return " ; ".join(chunks)
+
+
+def _compute_mod_diff(baseline: Dict[str, Any], current: Dict[str, Any]) -> List[Tuple[str, str, str]]:
+    # Focus on the fields that matter operationally
+    diffs: List[Tuple[str, str, str]] = []
+
+    def ch(label: str, old: Any, new: Any):
+        if old != new:
+            diffs.append((label, _safe_text(old), _safe_text(new)))
+
+    ch("Placement Date", baseline.get("placement_date"), current.get("placement_date"))
+    ch("Loading Authorities", _summarize_authority_list(baseline.get("loading") or []), _summarize_authority_list(current.get("loading") or []))
+    ch("Unloading Authorities", _summarize_authority_list(baseline.get("unloading") or []), _summarize_authority_list(current.get("unloading") or []))
+    ch("Materials Summary", _summarize_materials(baseline.get("materials") or []), _summarize_materials(current.get("materials") or []))
+    ch("Route (Km)", baseline.get("route_total_km"), current.get("route_total_km"))
+    ch("Lorry Capacity", baseline.get("lorry_capacity"), current.get("lorry_capacity"))
+    ch("Carrier Size", baseline.get("lorry_carrier_size"), current.get("lorry_carrier_size"))
+
+    return diffs
+
+def generate_modification_advice_pdf(
+    snapshot: Dict[str, Any],
+    base_letter_no: str,
+    base_letter_date: date,
+    mod_letter_no: str,
+    diffs: List[Tuple[str, str, str]],
+    out_path: Path,
+) -> None:
+    _register_verdana_fonts()
+
+    styles = getSampleStyleSheet()
+    normal = ParagraphStyle(
+        "normal",
+        parent=styles["Normal"],
+        fontName="Verdana",
+        fontSize=11,
+        leading=12.65,
+    )
+    bold = ParagraphStyle("bold", parent=normal, fontName="Verdana-Bold")
+    right = ParagraphStyle("right", parent=normal, alignment=TA_RIGHT)
+    center = ParagraphStyle("center", parent=normal, alignment=TA_CENTER)
+
+    # For materials alignment (same as Placement Advice)
+    money_right = ParagraphStyle("money_right", parent=normal, alignment=TA_RIGHT)
+    money_right_bold = ParagraphStyle("money_right_bold", parent=bold, alignment=TA_RIGHT)
+
+    booking: Booking = snapshot["booking"]
+    ag = snapshot["agreement"]
+    letter_date: date = snapshot["letter_date"]
+    trip_serial: int = snapshot["trip_serial"]
+
+    # ---- Letter No ----
+    prefix = (ag.placement_ref_prefix or "").strip().strip("/")
+    letter_no = f"{prefix} / Transport / Modification / {trip_serial}"
+
+    # Detect if materials changed (so we print full material table(s))
+    materials_changed = any(
+        (label or "").strip().lower() == "materials summary"
+        for (label, _old, _new) in (diffs or [])
+    )
+
+    class FooterCanvas(pdfcanvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._saved_page_states = []
+
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            total_pages = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self._draw_footer(total_pages)
+                super().showPage()
+            super().save()
+
+        def _draw_footer(self, total_pages: int):
+            self.saveState()
+            self.setFont("Verdana", 9)
+            y = 10 * mm
+            self.drawString(doc.leftMargin, y, letter_no)
+            self.drawRightString(
+                doc.pagesize[0] - doc.rightMargin,
+                y,
+                f"Page {self.getPageNumber()} of {total_pages}",
+            )
+            self.restoreState()
+
+    doc = SimpleDocTemplate(
+        str(out_path),
+        pagesize=A4,
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=12 * mm,
+        bottomMargin=16 * mm,
+    )
+
+    story: List[Any] = []
+
+    # ---- Letterhead ----
+    lh = Path(current_app.root_path) / "static" / "letterhead" / "placement_advice_header.png"
+    if lh.exists():
+        img = Image(str(lh))
+        scale = doc.width / img.imageWidth
+        img.drawWidth = doc.width
+        img.drawHeight = img.imageHeight * scale
+        story.append(img)
+        story.append(Spacer(1, 6))
+
+    # ---- No / Date line ----
+    no_date_tbl = Table(
+        [[letter_no, f"Date : {_fmt_date_ddmmyyyy(letter_date)}"]],
+        colWidths=[doc.width * 0.65, doc.width * 0.35],
+    )
+    no_date_tbl.setStyle(TableStyle(_table_base_style() + [
+        ("ALIGN", (0, 0), (0, 0), "LEFT"),
+        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    story.append(no_date_tbl)
+    story.append(Spacer(1, 10))
+
+    # ---- Firm block ----
+    story.append(Paragraph(f"M/s. {booking.company.name}", bold))
+    story.append(Paragraph(f"{booking.company.address}", bold))
+    story.append(Spacer(1, 12))
+
+    # ---- Sub / Ref ----
+    ref_rows = [
+        [Paragraph("Sub", bold), Paragraph(":", bold), Paragraph("Modification Advice", bold)],
+        [Paragraph("Ref", bold), Paragraph(":", bold),
+         Paragraph(f"1. LOA No. {ag.loa_number}", normal)],
+        ["", "", Paragraph(
+            f"2. Placement Advice No. {base_letter_no}, Dated {_fmt_date_ddmmyyyy(base_letter_date)}",
+            normal
+        )],
+    ]
+
+    ref_tbl = Table(
+        ref_rows,
+        colWidths=[20 * mm, 8 * mm, doc.width - (28 * mm)],
+    )
+    ref_tbl.setStyle(TableStyle(_table_base_style() + [
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("WORDWRAP", (2, 0), (2, -1), "CJK"),
+    ]))
+    story.append(ref_tbl)
+    story.append(Spacer(1, 10))
+
+    # ---- Divider ----
+    story.append(Paragraph("*****", center))
+    story.append(Spacer(1, 10))
+
+    # ---- Body ----
+    story.append(
+        Paragraph(
+            "With reference to the above, the details of placement advised has been modified as follows.",
+            normal,
+        )
+    )
+    story.append(Spacer(1, 8))
+
+    # ---- Revised values list (NEW VALUES ONLY) ----
+    printed_any = False
+    if diffs:
+        idx = 1
+        for (label, _old, new) in diffs:
+            # If materials changed, don't print "Materials Summary" line item;
+            # instead we will print the full materials table(s) below.
+            if (label or "").strip().lower() == "materials summary":
+                continue
+
+            story.append(Paragraph(f"{idx}. {label} : {new}", normal))
+            story.append(Spacer(1, 4))
+            printed_any = True
+            idx += 1
+
+    if not printed_any and not materials_changed:
+        story.append(Paragraph("No material changes recorded.", normal))
+
+    # ---- If materials changed, print FULL material table(s) like Placement Advice ----
+    if materials_changed:
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("Revised material details are as follows:", normal))
+        story.append(Spacer(1, 8))
+
+        mts = sorted((booking.material_tables or []), key=lambda m: ((m.sequence_index or 0), (m.id or 0)))
+
+        if not mts:
+            story.append(Paragraph("-", normal))
+            story.append(Spacer(1, 6))
+        else:
+            for mt in mts:
+                tbl = _render_material_table(mt, doc.width, normal, bold, center, money_right, money_right_bold)
+                story.append(tbl)
+                story.append(Spacer(1, 6))
+
+                from_ba = mt.booking_authority
+                meet_desig = _authority_designation(from_ba) if from_ba else "-"
+                story.append(Paragraph(f"Authority to meet for collection : {meet_desig}", bold))
+                story.append(Spacer(1, 12))
+
+    # ---- Signature ----
+    story.append(Spacer(1, 18))
+    story.append(Paragraph("(R. Prashaanth)", right))
+    story.append(Paragraph("DEE/RS/ED", right))
+    story.append(Paragraph("For Sr.DEE/RS/ED", right))
+
+    doc.build(story, canvasmaker=FooterCanvas)
+
 # =============================================================================
 # Routes
 # =============================================================================
@@ -838,6 +1176,42 @@ def generate_placement_advice_pdf(snapshot: Dict[str, Any], out_path: Path) -> N
 def generate_placement_advice(booking_id: int):
     booking = Booking.query.get_or_404(booking_id)
 
+    letter_type_base = "PLACEMENT"
+
+    baseline_letter = (
+        BookingLetter.query
+        .filter_by(booking_id=booking.id, letter_type=letter_type_base)
+        .order_by(BookingLetter.sequence_no.asc())
+        .first()
+    )
+
+    if request.method == "GET":
+        letter_type_base = "PLACEMENT"
+        baseline_letter = (
+            BookingLetter.query
+            .filter_by(booking_id=booking.id, letter_type=letter_type_base)
+            .order_by(BookingLetter.sequence_no.asc())
+            .first()
+        )
+
+        # ✅ If asked, download the already-issued baseline Placement Advice PDF
+        if request.args.get("download") == "1":
+            if not baseline_letter or not baseline_letter.pdf_path:
+                flash("No issued Placement Advice PDF found for this booking.", "error")
+                return redirect(url_for("admin.generate_placement_advice", booking_id=booking.id))
+
+            pdf_path = Path(baseline_letter.pdf_path)
+            if not pdf_path.exists():
+                flash("Issued Placement Advice PDF is missing from storage.", "error")
+                return redirect(url_for("admin.generate_placement_advice", booking_id=booking.id))
+
+            return send_file(
+                str(pdf_path),
+                as_attachment=True,
+                download_name=_clean_filename_keep_spaces(pdf_path.name),
+                mimetype="application/pdf",
+            )
+
     if booking.is_cancelled:
         flash("Cannot generate Placement Advice for a CANCELLED booking.", "error")
         return redirect(url_for("admin.booking_detail", booking_id=booking.id))
@@ -845,12 +1219,43 @@ def generate_placement_advice(booking_id: int):
     requires_attachment = booking_requires_attachment_pdf(booking)
 
     if request.method == "GET":
+        letter_type_base = "PLACEMENT"
+        baseline_letter = (
+            BookingLetter.query
+            .filter_by(booking_id=booking.id, letter_type=letter_type_base)
+            .order_by(BookingLetter.sequence_no.asc())
+            .first()
+        )
+
+        baseline_has_snapshot = False
+        changes_detected = False
+
+        if baseline_letter and baseline_letter.snapshot_json:
+            base_canon = baseline_letter.snapshot_json.get("canonical")
+            base_hash_stored = baseline_letter.snapshot_json.get("content_hash")
+
+            baseline_has_snapshot = bool(base_canon and base_hash_stored)
+
+            if baseline_has_snapshot:
+                # ✅ Recompute baseline hash using current hash rules (letter_date excluded)
+                base_hash = _hash_canonical_snapshot(base_canon)
+
+                # ✅ Compute current hash from current booking state
+                current_canon = build_canonical_snapshot_for_placement(booking, date.today())
+                current_hash = _hash_canonical_snapshot(current_canon)
+
+                changes_detected = (current_hash != base_hash)
+
         return render_template(
             "admin/letters/placement_advice.html",
             booking=booking,
-            requires_attachment=requires_attachment,
+            requires_attachment=(requires_attachment and baseline_letter is None),
             default_letter_date=date.today().isoformat(),
+            baseline_letter=baseline_letter,
+            baseline_has_snapshot=baseline_has_snapshot,
+            changes_detected=changes_detected,
         )
+
 
     letter_date_str = (request.form.get("letter_date") or "").strip()
     try:
@@ -862,7 +1267,8 @@ def generate_placement_advice(booking_id: int):
     uploaded_path: Optional[Path] = None
     original_name: Optional[str] = None
 
-    if requires_attachment:
+    # Attachment is required ONLY when issuing the first (baseline) Placement Advice.
+    if requires_attachment and baseline_letter is None:
         f = request.files.get("attachment_pdf")
         if not f or not f.filename:
             flash("Attachment PDF is required because materials are in ATTACHED mode.", "error")
@@ -871,7 +1277,98 @@ def generate_placement_advice(booking_id: int):
             flash("Attachment must be a PDF file.", "error")
             return redirect(url_for("admin.generate_placement_advice", booking_id=booking.id))
 
+
     snapshot = build_snapshot(booking, letter_date_val)
+    current_canon = build_canonical_snapshot_for_placement(booking, letter_date_val)
+    current_hash = _hash_canonical_snapshot(current_canon)
+
+    # -------------------------------------------------------------------------
+    # Enforce: Placement Advice is FINAL.
+    # If baseline exists:
+    #   - if unchanged -> serve stored baseline PDF
+    #   - if changed   -> issue Modification Advice (do NOT regenerate baseline)
+    # -------------------------------------------------------------------------
+
+    if baseline_letter is not None:
+        base_snapshot = (baseline_letter.snapshot_json or {})
+        base_canon = base_snapshot.get("canonical")
+        base_hash = base_snapshot.get("content_hash")
+
+        # Backward compatible: recompute baseline hash from canonical using current rules
+        # (letter_date excluded from hash).
+        if base_canon:
+            base_hash = _hash_canonical_snapshot(base_canon)
+
+        # If we don't have canonical+hash stored for the baseline (older records),
+        # we cannot auto-detect changes reliably. Default to serving baseline.
+        if not base_canon or not base_hash:
+            flash("Baseline Placement Advice exists. Snapshot not stored for auto-change detection; serving issued letter.", "info")
+            return send_file(
+                str(baseline_letter.pdf_path),
+                as_attachment=True,
+                download_name=_clean_filename_keep_spaces(Path(baseline_letter.pdf_path).name),
+                mimetype="application/pdf",
+            )
+
+        if base_hash == current_hash:
+            # No changes -> serve baseline PDF (no regeneration)
+            return send_file(
+                str(baseline_letter.pdf_path),
+                as_attachment=True,
+                download_name=_clean_filename_keep_spaces(Path(baseline_letter.pdf_path).name),
+                mimetype="application/pdf",
+            )
+
+        # Changes exist -> issue Modification Advice
+        letter_type_mod = "PLACEMENT_MOD"
+        mod_seq = _next_letter_sequence(booking.id, letter_type_mod)
+        out_dir = _booking_letters_dir(booking.id)
+
+        mod_pdf = out_dir / f"placement_mod_v{mod_seq:03d}.pdf"
+
+        ag = booking.agreement
+        trip_serial = snapshot["trip_serial"]
+        base_letter_no = _build_ref_no(ag.placement_ref_prefix, trip_serial)
+        base_letter_date = baseline_letter.letter_date or letter_date_val
+
+        mod_letter_no = _build_mod_ref_no(ag.placement_ref_prefix, trip_serial, mod_seq)
+
+        diffs = _compute_mod_diff(base_canon, current_canon)
+
+        generate_modification_advice_pdf(
+            snapshot=snapshot,
+            base_letter_no=base_letter_no,
+            base_letter_date=base_letter_date,
+            mod_letter_no=mod_letter_no,
+            diffs=diffs,
+            out_path=mod_pdf,
+        )
+
+        mod_letter = BookingLetter(
+            booking_id=booking.id,
+            letter_type=letter_type_mod,
+            sequence_no=mod_seq,
+            letter_date=letter_date_val,
+            snapshot_json={
+                "base_letter_id": baseline_letter.id,
+                "base_letter_type": letter_type_base,
+                "base_content_hash": base_hash,
+                "content_hash": current_hash,
+                "canonical": current_canon,
+                "diffs": [{"field": f, "old": o, "new": n} for (f, o, n) in diffs],
+            },
+            pdf_path=str(mod_pdf),
+        )
+        db.session.add(mod_letter)
+        db.session.commit()
+
+        download_name = _clean_filename_keep_spaces(f"MOD - {Path(mod_pdf).name}")
+        return send_file(
+            str(mod_pdf),
+            as_attachment=True,
+            download_name=download_name,
+            mimetype="application/pdf",
+        )
 
     letter_type = "PLACEMENT"
     seq = _next_letter_sequence(booking.id, letter_type)
@@ -904,6 +1401,8 @@ def generate_placement_advice(booking_id: int):
             "booking_id": booking.id,
             "trip_serial": snapshot["trip_serial"],
             "letter_date": snapshot["letter_date"].isoformat(),
+            "content_hash": current_hash,
+            "canonical": current_canon,
         },
         pdf_path=str(final_path),
     )
