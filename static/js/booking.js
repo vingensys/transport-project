@@ -1262,6 +1262,10 @@ if (btnAddAuthority) {
           if (onAnyChange) onAnyChange();
         });
 
+        amtInput.addEventListener("input", () => {
+          if (onAnyChange) onAnyChange();
+        });
+
         modeSel.addEventListener("change", () => {
           applyModeVisibility();
           updateLumpsumLocks();

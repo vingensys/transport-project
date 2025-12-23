@@ -52,6 +52,9 @@
     class="card"
   >
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="booking_scope" value="{{ request.args.get('booking_scope','') }}">
+    <input type="hidden" name="booking_status" value="{{ request.args.get('booking_status','') }}">
+    <input type="hidden" name="booking_search" value="{{ request.args.get('booking_search','') }}">
 
     <div class="card-body">
 
@@ -70,16 +73,67 @@
           <input
             type="date"
             name="letter_date"
-            class="form-control"
-            value="{% if booking.placement_date %}{{ booking.placement_date.isoformat() }}{% else %}{{ default_letter_date }}{% endif %}"
+            value="{{ (baseline_letter.letter_date.isoformat() if baseline_letter and baseline_letter.letter_date else default_letter_date) }}"
             required
-          >
+          />
+
           <div class="form-text">
             {% if baseline_letter %}
-              Date of the Modification Advice (if generated).
+              Date of the Modification Advice (if generated). Default is today when changes are detected.
             {% else %}
               Used in the generated Placement Advice PDF.
             {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================================================== -->
+      <!-- Letter Signatory selection -->
+      <!-- ===================================================== -->
+      <div class="row mb-3">
+        <div class="col-md-6">
+          <label class="form-label">Letter signed by</label>
+          <select class="form-select" name="signed_by_id" required>
+            {% if signatories and signatories|length > 0 %}
+              {% set sel_by = default_signed_by_id %}
+              <option value="" disabled {% if not sel_by %}selected{% endif %}>-- Select --</option>
+              {% for s in signatories %}
+                <option
+                  value="{{ s.id }}"
+                  {% if sel_by and (sel_by|string) == (s.id|string) %}selected{% endif %}
+                >
+                  {{ s.name }} — {{ s.designation }}
+                </option>
+              {% endfor %}
+            {% else %}
+              <option value="" selected disabled>No active signatories configured</option>
+            {% endif %}
+          </select>
+          <div class="form-text">
+            This prints the signatory name/designation block in the PDF.
+          </div>
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">For</label>
+          <select class="form-select" name="signed_for_id" required>
+            {% if signatories and signatories|length > 0 %}
+              {% set sel_for = default_signed_for_id %}
+              <option value="" disabled {% if not sel_for %}selected{% endif %}>-- Select --</option>
+              {% for s in signatories %}
+                <option
+                  value="{{ s.id }}"
+                  {% if sel_for and (sel_for|string) == (s.id|string) %}selected{% endif %}
+                >
+                  {{ s.name }} — {{ s.designation }}
+                </option>
+              {% endfor %}
+            {% else %}
+              <option value="" selected disabled>No active signatories configured</option>
+            {% endif %}
+          </select>
+          <div class="form-text">
+            If different from “signed by”, PDF will show: Name + Designation + “For &lt;Designation&gt;”.
           </div>
         </div>
       </div>
@@ -111,6 +165,17 @@
               <span class="badge bg-warning text-dark">
                 Changes detected since issued Placement Advice
               </span>
+
+              {% if existing_mod_letter %}
+                <span class="badge bg-success ms-2">
+                  Matching Modification Advice already exists
+                </span>
+              {% else %}
+                <span class="badge bg-danger ms-2">
+                  No Modification Advice issued for current changes
+                </span>
+              {% endif %}
+
             {% else %}
               <span class="badge bg-secondary">
                 No changes detected since issued Placement Advice
@@ -121,6 +186,20 @@
               Change detection not available for this issued letter
             </span>
           {% endif %}
+        </div>
+      {% endif %}
+
+      {% if baseline_letter and baseline_has_snapshot and changes_detected and existing_mod_letter %}
+        <div class="alert alert-info mt-3 mb-0">
+          <strong>No need to generate again.</strong>
+          A Modification Advice already exists for the current booking state.
+          Use the download button below.
+        </div>
+      {% endif %}
+
+      {% if not signatories or signatories|length == 0 %}
+        <div class="alert alert-danger mt-3 mb-0">
+          No active signatories found in master data. Please add them in Master → Config.
         </div>
       {% endif %}
 
@@ -141,17 +220,39 @@
       <div class="d-flex gap-2">
 
         {% if baseline_letter %}
+          <!-- Baseline download -->
           <a
-            href="{{ url_for('admin.generate_placement_advice', booking_id=booking.id, download=1) }}"
+            href="{{ url_for('admin.generate_placement_advice',
+                 booking_id=booking.id,
+                 download=1,
+                 booking_scope=request.args.get('booking_scope'),
+                 booking_status=request.args.get('booking_status'),
+                 booking_search=request.args.get('booking_search')) }}"
             class="btn btn-outline-primary"
           >
             Download Placement Advice
           </a>
 
+          <!-- MOD area -->
           {% if baseline_has_snapshot and changes_detected %}
-            <button class="btn btn-warning">
-              Generate Modification Advice
-            </button>
+
+            {% if existing_mod_letter %}
+              <a
+                href="{{ url_for('admin.generate_placement_advice', booking_id=booking.id, download_mod=1) }}"
+                class="btn btn-outline-success"
+              >
+                Download Modification Advice
+              </a>
+
+              <button class="btn btn-warning" disabled title="A matching Modification Advice already exists for current changes.">
+                Generate Modification Advice
+              </button>
+            {% else %}
+              <button class="btn btn-warning" {% if not signatories or signatories|length == 0 %}disabled{% endif %}>
+                Generate Modification Advice
+              </button>
+            {% endif %}
+
           {% else %}
             <button class="btn btn-warning" disabled>
               Generate Modification Advice
@@ -159,7 +260,7 @@
           {% endif %}
 
         {% else %}
-          <button class="btn btn-primary">
+          <button class="btn btn-primary" {% if not signatories or signatories|length == 0 %}disabled{% endif %}>
             Generate Placement Advice
           </button>
         {% endif %}

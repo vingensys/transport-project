@@ -48,6 +48,10 @@ class LorryDetails(db.Model):
     number_of_wheels = db.Column(db.Integer, nullable=False)
     remarks = db.Column(db.String(200))
 
+    @property
+    def display_capacity(self) -> str:
+        return f"{self.capacity} Ton Lorry ({self.number_of_wheels} No. of Wheels)"
+    
     def __repr__(self):
         return f"<Lorry {self.id} {self.capacity}>"
 
@@ -388,3 +392,19 @@ class BookingLetterAttachment(db.Model):
 
     def __repr__(self):
         return f"<BookingLetterAttachment letter={self.booking_letter_id}>"
+    
+class LetterSignatory(db.Model):
+    __tablename__ = "letter_signatory"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    designation = db.Column(db.String(120), nullable=False)
+
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    sort_order = db.Column(db.Integer, nullable=False, default=1)
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<LetterSignatory {self.id} {self.name} ({self.designation})>"
